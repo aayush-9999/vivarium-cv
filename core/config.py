@@ -23,12 +23,6 @@ CLASS_NAMES = {
 CONF_THRESHOLD = 0.45
 IOU_THRESHOLD  = 0.40   # NMS IOU
 
-# ── Level status thresholds (%) ──────────────────────────────────
-LEVEL_THRESHOLDS = {
-    "CRITICAL": 10,
-    "LOW":      20,
-}
-
 # ── ROI zones per cage (x, y, w, h) in pixels ───────────────────
 # These assume 640x640 input. Recalibrate after first camera mount.
 ROI_ZONES = {
@@ -41,9 +35,51 @@ ROI_ZONES = {
 
 # ── Inference scheduling ─────────────────────────────────────────
 INFERENCE_INTERVAL_SEC  = 300   # 5 minutes baseline polling
-MOTION_PIXEL_THRESHOLD  = 0.03  # 3% of frame pixels changed = motion detected
+MOTION_PIXEL_THRESHOLD  = 0.02  # 2% of frame pixels changed = motion detected
 MOTION_CHECK_INTERVAL   = 30    # seconds between motion checks
 
 # ── Frame saving ─────────────────────────────────────────────────
 SAVE_FLAGGED_FRAMES = True      # save frame to disk when status is LOW or CRITICAL
 STALE_READING_MIN   = 15        # minutes before CageStatus.is_stale = True
+
+
+
+SIZE: tuple[int, int] = (640, 640)   # (width, height) — YOLOv8-nano expects this
+
+# ── Level thresholds (%) ──────────────────────────────────────────
+LEVEL_THRESHOLDS: dict[str, float] = {
+    "CRITICAL": 10.0,   # below this  → CRITICAL alert
+    "LOW":      25.0,   # below this  → LOW alert
+}
+
+ROI_ZONES: dict[str, dict[str, tuple[int, int, int, int]]] = {
+    "default": {
+        "jug":    (480, 80,  140, 300),   # water jug — right side, tall
+        "hopper": (20,  80,  160, 200),   # food hopper — left side
+        "floor":  (20,  300, 600, 280),   # cage floor — mouse activity zone
+    },
+    "type_b": {
+        # Secondary cage layout — override per deployment
+        "jug":    (460, 60,  160, 320),
+        "hopper": (10,  60,  180, 220),
+        "floor":  (10,  310, 620, 270),
+    },
+}
+
+# ── YOLO class mapping ────────────────────────────────────────────
+# Maps YOLO class index → human label.
+# Must match the order in your dataset's data.yaml.
+YOLO_CLASS_MAP: dict[int, str] = {
+    0: "mouse",
+}
+
+# ── Inference confidence / NMS ────────────────────────────────────
+YOLO_CONF_THRESHOLD: float = 0.35
+YOLO_IOU_THRESHOLD:  float = 0.45
+
+# ── Alert cooldown ────────────────────────────────────────────────
+# Minimum seconds between repeated alerts for the same cage + type
+ALERT_COOLDOWN_SECONDS: int = 600   # 10 minutes
+
+# ── Stale reading threshold ───────────────────────────────────────
+STALE_READING_MINUTES: int = 15
