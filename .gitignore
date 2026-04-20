@@ -1,0 +1,8 @@
+venv310
+venv
+runs
+.env
+dataset
+yolo26n.pt
+yolov8n.pt
+output.jpg
