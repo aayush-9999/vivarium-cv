@@ -1,7 +1,15 @@
 # core/schemas.py
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Tuple
+
+class BoundingBox(BaseModel):
+    """Normalised or pixel-space bounding box from YOLO."""
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    conf: float = Field(..., ge=0.0, le=1.0)
 
 class LevelReading(BaseModel):
     pct:    float  = Field(..., ge=0.0, le=100.0)
@@ -14,7 +22,12 @@ class DetectionResult(BaseModel):
     water:          LevelReading
     food:           LevelReading
     inference_ms:   Optional[int]    = None
-    image_path:     Optional[str]    = None  # saved frame path if flagged
+    image_path:     Optional[str]    = None
+
+    # YOLO-detected container bounding boxes (pixel coords in 640x640 space)
+    # None means YOLO didn't detect that container — pipeline falls back to hardcoded ROI
+    water_bbox:     Optional[BoundingBox] = None
+    food_bbox:      Optional[BoundingBox] = None
 
     class Config:
         json_encoders = {

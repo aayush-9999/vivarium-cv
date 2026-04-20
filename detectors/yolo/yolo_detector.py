@@ -1,46 +1,44 @@
 # detectors/yolo/yolo_detector.py
 """
-YOLOv8-nano detector.
-Inherits BaseDetector and implements _load_model, detect, _postprocess.
+YOLOv8-nano detector — 3-class model.
+    class 0: mouse
+    class 1: water_container
+    class 2: food_area
 """
 from __future__ import annotations
 
 import time
+from typing import Optional, Tuple
 import numpy as np
 
 from core.base_detector import BaseDetector
-from core.schemas import DetectionResult, LevelReading
+from core.schemas import DetectionResult, LevelReading, BoundingBox
 from core.config import YOLO_CONF_THRESHOLD, YOLO_IOU_THRESHOLD
 from core.exceptions import DetectorInitError, InferenceError
-from detectors.yolo.postprocessor import parse_yolo_results
+from detectors.yolo.postprocessor import (
+    parse_yolo_results,
+    extract_container_bboxes,
+)
 
 
 class YOLODetector(BaseDetector):
     """
-    Wraps Ultralytics YOLOv8-nano for mouse detection.
+    Wraps YOLOv8-nano for 3-class vivarium inference.
 
     Inference flow:
-        raw BGR frame (640x640, uint8)
-            → model.predict()           # Ultralytics handles pre/post internally
-            → parse_yolo_results()      # our postprocessor
+        raw BGR frame (640×640, uint8)
+            → model.predict()
+            → extract_container_bboxes()   ← new: pulls water/food bbox
+            → parse_yolo_results()
             → DetectionResult
-    
-    Level readings (water / food) are injected at call time from the pipeline
-    because they come from a separate OpenCV HSV path, not from YOLO.
     """
 
-    def __init__(
-        self,
-        weights_path: str,
-        device: str = "cpu",
-    ):
-        # BaseDetector.__init__ calls _load_model automatically
+    def __init__(self, weights_path: str, device: str = "cpu"):
         super().__init__(weights_path=weights_path, device=device)
 
     # ── BaseDetector implementation ───────────────────────────────
 
     def _load_model(self) -> None:
-        """Load YOLOv8-nano weights via Ultralytics."""
         try:
             from ultralytics import YOLO
             self.model = YOLO(self.weights_path)
@@ -57,28 +55,20 @@ class YOLODetector(BaseDetector):
         self,
         frame: np.ndarray,
         cage_id: str,
-        water_reading: LevelReading | None = None,
-        food_reading:  LevelReading | None = None,
-    ) -> DetectionResult:
+        water_reading: Optional[LevelReading] = None,
+        food_reading:  Optional[LevelReading] = None,
+    ) -> Tuple[DetectionResult, Optional[BoundingBox], Optional[BoundingBox]]:
         """
-        Run YOLOv8-nano inference on a preprocessed 640x640 BGR frame.
-
-        Args:
-            frame:         uint8 BGR ndarray, shape (640, 640, 3).
-                           DO NOT pass the blob (1,3,H,W) here — Ultralytics
-                           handles its own preprocessing internally.
-            cage_id:       Cage identifier for the result.
-            water_reading: Pre-computed water LevelReading (from HSV path).
-            food_reading:  Pre-computed food LevelReading (from HSV path).
+        Run YOLOv8 inference on a 640×640 BGR frame.
 
         Returns:
-            DetectionResult with mouse_count, water, food, timing.
+            (DetectionResult, water_bbox, food_bbox)
+            water_bbox / food_bbox are None when YOLO doesn't detect that class.
+            The pipeline uses these bboxes as dynamic ROIs for level estimation.
         """
         if not self.is_ready():
-            raise InferenceError("Model is not loaded. Call _load_model() first.")
+            raise InferenceError("Model is not loaded.")
 
-        # Provide zero-filled level readings if not supplied
-        # (e.g. during warmup or unit tests)
         if water_reading is None:
             water_reading = LevelReading(pct=0.0, status="CRITICAL")
         if food_reading is None:
@@ -93,42 +83,46 @@ class YOLODetector(BaseDetector):
                 iou=YOLO_IOU_THRESHOLD,
                 imgsz=640,
                 device=self.device,
-                verbose=False,   # suppress Ultralytics stdout per-frame
+                verbose=False,
             )
         except Exception as e:
             raise InferenceError(f"YOLO inference failed for cage '{cage_id}': {e}") from e
 
-        return self._postprocess(
+        # Pull container bboxes BEFORE building the result
+        water_bbox, food_bbox = extract_container_bboxes(results)
+
+        result = self._postprocess(
             raw_output=results,
             cage_id=cage_id,
             water_reading=water_reading,
             food_reading=food_reading,
             inference_start_ns=t_start,
+            water_bbox=water_bbox,
+            food_bbox=food_bbox,
         )
+
+        return result, water_bbox, food_bbox
 
     def _postprocess(
         self,
         raw_output,
         cage_id: str,
-        water_reading: LevelReading | None = None,
-        food_reading:  LevelReading | None = None,
+        water_reading: Optional[LevelReading] = None,
+        food_reading:  Optional[LevelReading] = None,
         inference_start_ns: int = 0,
+        water_bbox: Optional[BoundingBox] = None,
+        food_bbox:  Optional[BoundingBox] = None,
     ) -> DetectionResult:
-        """Delegates to the standalone postprocessor module."""
         return parse_yolo_results(
             results=raw_output,
             cage_id=cage_id,
             water_reading=water_reading or LevelReading(pct=0.0, status="CRITICAL"),
             food_reading=food_reading   or LevelReading(pct=0.0, status="CRITICAL"),
             inference_start_ns=inference_start_ns,
+            water_bbox=water_bbox,
+            food_bbox=food_bbox,
         )
 
-    # ── Warmup override ───────────────────────────────────────────
-
     def warmup(self) -> None:
-        """
-        Send a dummy 640x640 frame through YOLO once so CUDA kernels
-        are warm before the first real cage frame arrives.
-        """
         dummy = np.zeros((640, 640, 3), dtype=np.uint8)
         self.detect(dummy, cage_id="__warmup__")

@@ -1,20 +1,22 @@
 # pipeline/yolo_pipeline.py
 """
-Full single-cage inference pipeline wiring:
+Full single-cage inference pipeline:
     raw frame
-        ├─► FramePreprocessor (resize to 640x640)
-        ├─► WaterLevelEstimator (HSV on jug ROI)
-        ├─► FoodLevelEstimator  (HSV on hopper ROI)
-        └─► YOLODetector        (mouse count)
-            └─► DetectionResult
+        ├─► FramePreprocessor  (resize to 640×640)
+        ├─► YOLODetector        (detects mouse + water_container + food_area)
+        │       └─► water_bbox, food_bbox  ← NEW: dynamic ROI from YOLO
+        ├─► WaterLevelEstimator (HSV on water_container bbox, or fallback zone)
+        ├─► FoodLevelEstimator  (HSV on food_area bbox, or fallback zone)
+        └─► DetectionResult
 """
 from __future__ import annotations
 
 import os
 import cv2
 import numpy as np
+from typing import Optional
 
-from core.schemas import DetectionResult
+from core.schemas import DetectionResult, BoundingBox
 from core.exceptions import VivariumCVError
 from core.config import INPUT_SIZE
 
@@ -27,12 +29,11 @@ from detectors.yolo.yolo_detector import YOLODetector
 
 class YOLOPipeline:
     """
-    Orchestrates preprocessing → level estimation → YOLO detection
-    for a single frame from a single cage.
-
-    Usage:
-        pipeline = YOLOPipeline()
-        result   = pipeline.run(frame, cage_id="cage_01")
+    Orchestrates:
+      1. Preprocessing (letterbox to 640×640)
+      2. YOLO inference → mouse count + container bboxes
+      3. Level estimation on YOLO-detected container regions
+         (falls back to hardcoded ROI zones if YOLO misses a container)
     """
 
     def __init__(self, cage_type: str = "default"):
@@ -45,7 +46,6 @@ class YOLOPipeline:
         self.food_est      = FoodLevelEstimator()
         self.detector      = YOLODetector(weights_path=weights, device=device)
 
-        # Warm up YOLO so first real frame doesn't pay CUDA init cost
         self.detector.warmup()
 
     # ── Public ────────────────────────────────────────────────────
@@ -57,41 +57,43 @@ class YOLOPipeline:
         save_flagged: bool = False,
         output_dir:  str  = "flagged_frames",
     ) -> DetectionResult:
-        """
-        Full pipeline for one frame.
-
-        Args:
-            frame:        Raw BGR frame from camera (any resolution).
-            cage_id:      Cage identifier written into the result.
-            save_flagged: If True, saves frame to disk when water/food is CRITICAL.
-            output_dir:   Directory for flagged frame images.
-
-        Returns:
-            DetectionResult
-        """
         if frame is None or frame.size == 0:
             raise VivariumCVError(f"Empty frame passed for cage '{cage_id}'.")
 
-        # ── Step 1: resize to 640×640 (letterbox) ─────────────────
+        # ── Step 1: resize to 640×640 ─────────────────────────────
         frame_640 = self.preprocessor.resize(frame)
 
-        # ── Step 2: level estimation (operates on uint8 ROI crops) ─
-        water_roi  = self.preprocessor.apply_roi(frame_640, zone="jug")
-        food_roi   = self.preprocessor.apply_roi(frame_640, zone="hopper")
+        # ── Step 2: YOLO inference ────────────────────────────────
+        # Returns dummy result first (no level readings yet), plus bboxes
+        # We'll re-run with real level readings in step 4.
+        _, water_bbox, food_bbox = self.detector.detect(
+            frame=frame_640,
+            cage_id=cage_id,
+            # Placeholders — we re-call with real readings below
+            water_reading=None,
+            food_reading=None,
+        )
+
+        # ── Step 3: crop ROI for level estimation ─────────────────
+        # Use YOLO-detected bbox if available, otherwise fall back to config zone
+        water_roi = self._crop_roi(frame_640, water_bbox, fallback_zone="jug")
+        food_roi  = self._crop_roi(frame_640, food_bbox,  fallback_zone="hopper")
 
         water_reading = self.water_est.read(water_roi)
         food_reading  = self.food_est.read(food_roi)
 
-        # ── Step 3: YOLO mouse detection ───────────────────────────
-        # Pass the uint8 640×640 frame — Ultralytics preprocesses internally
-        result = self.detector.detect(
+        # ── Step 4: YOLO again with real level readings ────────────
+        # (Single-pass alternative: run YOLO once, then estimate levels.
+        #  We accept two forwards here because YOLO is fast and the
+        #  level estimators are OpenCV-only — no GPU cost.)
+        result, water_bbox, food_bbox = self.detector.detect(
             frame=frame_640,
             cage_id=cage_id,
             water_reading=water_reading,
             food_reading=food_reading,
         )
 
-        # ── Step 4: optional frame saving when levels are critical ──
+        # ── Step 5: optional frame saving ─────────────────────────
         if save_flagged and self._should_flag(result):
             image_path = self._save_frame(frame_640, cage_id, output_dir)
             result = result.model_copy(update={"image_path": image_path})
@@ -99,18 +101,10 @@ class YOLOPipeline:
         return result
 
     def set_reference_frame(self, frame: np.ndarray) -> None:
-        """
-        Store a clean background frame for motion detection.
-        Call once per cage on startup after the cage is clean.
-        """
         frame_640 = self.preprocessor.resize(frame)
         self.bg_subtractor.set_reference(frame_640)
 
     def has_motion(self, frame: np.ndarray) -> bool:
-        """
-        Quick motion check — skip full inference if cage is static.
-        Returns True always if no reference frame has been set.
-        """
         if not self.bg_subtractor.has_reference():
             return True
         frame_640 = self.preprocessor.resize(frame)
@@ -118,31 +112,64 @@ class YOLOPipeline:
 
     def debug_frame(self, frame: np.ndarray) -> np.ndarray:
         """
-        Returns 640×640 frame annotated with:
-          - ROI zone rectangles
-          - Water mask overlay (blue)
-          - Food mask overlay (green)
-        Useful during camera calibration.
+        Returns annotated 640×640 frame with:
+        - YOLO detections (all 3 classes) drawn
+        - Water / food level mask overlays
+        - Fallback ROI zones shown if YOLO misses a container
         """
         frame_640 = self.preprocessor.resize(frame)
-        viz       = self.preprocessor.draw_debug(frame)
 
-        water_roi = self.preprocessor.apply_roi(frame_640, zone="jug")
-        food_roi  = self.preprocessor.apply_roi(frame_640, zone="hopper")
+        # Run detection
+        _, water_bbox, food_bbox = self.detector.detect(
+            frame=frame_640, cage_id="debug"
+        )
 
-        # Paste debug overlays back into the full frame
-        from core.config import ROI_ZONES
-        zones = ROI_ZONES["default"]   # use default for debug
+        viz = frame_640.copy()
 
-        jx, jy, jw, jh = zones["jug"]
-        hx, hy, hw, hh = zones["hopper"]
+        # Draw YOLO bboxes
+        _draw_bbox(viz, water_bbox, label="water_container", color=(255, 180, 0))
+        _draw_bbox(viz, food_bbox,  label="food_area",       color=(0, 200, 80))
 
-        viz[jy:jy+jh, jx:jx+jw] = self.water_est.debug_frame(water_roi)
-        viz[hy:hy+hh, hx:hx+hw] = self.food_est.debug_frame(food_roi)
+        # Overlay level masks
+        water_roi = self._crop_roi(frame_640, water_bbox, fallback_zone="jug")
+        food_roi  = self._crop_roi(frame_640, food_bbox,  fallback_zone="hopper")
+
+        water_debug = self.water_est.debug_frame(water_roi)
+        food_debug  = self.food_est.debug_frame(food_roi)
+
+        # Paste overlays back
+        wy1, wy2, wx1, wx2 = _bbox_to_slice(frame_640, water_bbox, self.preprocessor, "jug")
+        fy1, fy2, fx1, fx2 = _bbox_to_slice(frame_640, food_bbox,  self.preprocessor, "hopper")
+
+        viz[wy1:wy2, wx1:wx2] = water_debug
+        viz[fy1:fy2, fx1:fx2] = food_debug
 
         return viz
 
-    # ── Private ───────────────────────────────────────────────────
+    # ── Private helpers ───────────────────────────────────────────
+
+    def _crop_roi(
+        self,
+        frame_640: np.ndarray,
+        bbox: Optional[BoundingBox],
+        fallback_zone: str,
+    ) -> np.ndarray:
+        """
+        Crop the frame to the container region.
+        If YOLO detected the container, use that bbox (with a small padding).
+        Otherwise fall back to the hardcoded config ROI zone.
+        """
+        if bbox is not None:
+            h, w = frame_640.shape[:2]
+            pad = 8   # px padding around detected container
+            x1 = max(0, int(bbox.x1) - pad)
+            y1 = max(0, int(bbox.y1) - pad)
+            x2 = min(w, int(bbox.x2) + pad)
+            y2 = min(h, int(bbox.y2) + pad)
+            return frame_640[y1:y2, x1:x2].copy()
+        else:
+            # Fallback to hardcoded zone
+            return self.preprocessor.apply_roi(frame_640, fallback_zone)
 
     @staticmethod
     def _should_flag(result: DetectionResult) -> bool:
@@ -152,17 +179,49 @@ class YOLOPipeline:
         )
 
     @staticmethod
-    def _save_frame(
-        frame: np.ndarray,
-        cage_id: str,
-        output_dir: str,
-    ) -> str:
-        """Save frame as JPEG and return the file path."""
-        import os
+    def _save_frame(frame: np.ndarray, cage_id: str, output_dir: str) -> str:
         from datetime import datetime, timezone
-
         os.makedirs(output_dir, exist_ok=True)
         ts   = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = os.path.join(output_dir, f"{cage_id}_{ts}.jpg")
         cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         return path
+
+
+# ── Debug drawing helpers ─────────────────────────────────────────────────────
+
+def _draw_bbox(
+    img: np.ndarray,
+    bbox: Optional[BoundingBox],
+    label: str,
+    color: tuple,
+) -> None:
+    if bbox is None:
+        return
+    x1, y1, x2, y2 = int(bbox.x1), int(bbox.y1), int(bbox.x2), int(bbox.y2)
+    cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+    cv2.putText(img, f"{label} {bbox.conf:.2f}", (x1 + 4, y1 + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
+
+
+def _bbox_to_slice(
+    frame: np.ndarray,
+    bbox: Optional[BoundingBox],
+    preprocessor,
+    fallback_zone: str,
+) -> tuple[int, int, int, int]:
+    """Returns (y1, y2, x1, x2) slice indices for pasting debug overlays."""
+    if bbox is not None:
+        h, w = frame.shape[:2]
+        pad = 8
+        return (
+            max(0, int(bbox.y1) - pad),
+            min(h, int(bbox.y2) + pad),
+            max(0, int(bbox.x1) - pad),
+            min(w, int(bbox.x2) + pad),
+        )
+    else:
+        from core.config import ROI_ZONES
+        zones = ROI_ZONES.get(preprocessor.roi_manager.cage_type, ROI_ZONES["default"])
+        x, y, w, h = zones[fallback_zone]
+        return y, y + h, x, x + w
