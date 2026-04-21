@@ -9,7 +9,7 @@ def main():
 
 
     # Load image
-    img_path = r"dataset\split\images\val\image (3)_aug0023_wlow_flow.jpg"
+    img_path = r"dataset\original\image (2).png"
     img = cv2.imread(img_path)
 
     if img is None:

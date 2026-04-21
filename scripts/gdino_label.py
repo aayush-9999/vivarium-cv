@@ -1,36 +1,5 @@
 """
-scripts/gdino_label.py
-======================
-Labels ALL images (not just review_needed) using Grounding DINO.
-Outputs correct 3-class YOLO labels:
-    0 = mouse
-    1 = water_container
-    2 = food_area
-
-Strategy:
-  - Run 3 separate GDINO passes per image, one prompt per class.
-    This is more reliable than a single multi-class prompt because
-    GDINO's attention is cleaner when focused on one object type.
-  - Merge all detections, apply per-class NMS to kill duplicates.
-  - Write YOLO .txt with CORRECT class IDs (not all 0).
-  - Save coloured debug images so you can spot bad boxes fast.
-
-Usage:
-    # Label everything from scratch
-    python scripts/gdino_label.py
-
-    # Label only the review_needed list (faster if most labels are already OK)
-    python scripts/gdino_label.py --only-review
-
-    # Preview without writing anything
-    python scripts/gdino_label.py --dry-run
-
-    # Adjust thresholds if too many / too few boxes
-    python scripts/gdino_label.py --mouse-thresh 0.20 --container-thresh 0.28
-
-Output:
-    dataset/augmented/labels/   ← YOLO .txt files (class cx cy w h)
-    dataset/augmented/debug_gdino/  ← debug JPEGs with coloured boxes
+scripts/gdino_label_originals.py
 """
 
 from __future__ import annotations
@@ -44,108 +13,57 @@ import numpy as np
 import torch
 from PIL import Image
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-IMG_DIR     = Path("dataset/augmented/images")
-LABEL_DIR   = Path("dataset/augmented/labels")
-DEBUG_DIR   = Path("dataset/augmented/debug_gdino")
-REVIEW_FILE = Path("dataset/augmented/review_needed.txt")
+ORIG_DIR   = Path("dataset/original")
+DEBUG_DIR  = Path("dataset/augmented/debug_gdino_orig")
+IMG_SIZE   = 640
+MODEL_ID   = "IDEA-Research/grounding-dino-tiny"
 
-# ── Model ─────────────────────────────────────────────────────────────────────
-MODEL_ID = "IDEA-Research/grounding-dino-tiny"   # ~700 MB, cached after first run
-
-# ── Per-class prompts ─────────────────────────────────────────────────────────
-# GDINO is very prompt-sensitive. Specific visual descriptions work much better
-# than generic class names. Tweak these if your lab setup looks different.
 PROMPTS = {
-    0: "small white mouse. small brown mouse. lab rodent. small furry animal.",
+    0: "small white mouse. small brown mouse. lab rodent. small furry animal sitting.",
     1: (
-        "transparent water bottle. plastic water jug. glass water container. "
-        "sipper tube. drinking bottle mounted on cage. water dispenser."
+        "transparent water bottle. plastic water jug. sipper tube on cage wall. "
+        "drinking bottle. water dispenser."
     ),
     2: (
-        "food hopper. brown food pellets. rodent chow. grain pile. "
-        "feeding dish. food container. pellet dispenser."
+        "brown food pellets in tray. rodent food dish. food hopper. "
+        "grain pile in container. pellet dispenser."
     ),
 }
 
-# ── Thresholds (tune per class — mice are harder) ─────────────────────────────
-DEFAULT_THRESHOLDS = {
-    0: 0.22,   # mouse      — lower because mice are small + GDINO rarely sees them
-    1: 0.28,   # water_container
-    2: 0.25,   # food_area
-}
+DEFAULT_THRESHOLDS = {0: 0.22, 1: 0.30, 2: 0.28}
+NMS_IOU      = 0.40
+CLASS_COLORS = {0: (0, 255, 80), 1: (255, 180, 0), 2: (0, 140, 255)}
+CLASS_NAMES  = {0: "mouse", 1: "water", 2: "food"}
+DEVICE       = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ── NMS IoU for deduplication within each class ───────────────────────────────
-NMS_IOU = 0.45
-
-# ── Debug colours (BGR) ───────────────────────────────────────────────────────
-CLASS_COLORS = {
-    0: (0,   255,  80),    # green  — mouse
-    1: (255, 180,   0),    # blue   — water_container
-    2: (0,   140, 255),    # orange — food_area
-}
-CLASS_NAMES = {0: "mouse", 1: "water", 2: "food"}
-
-# ── Device ────────────────────────────────────────────────────────────────────
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Model loader
-# ─────────────────────────────────────────────────────────────────────────────
 
 def load_model():
     print(f"Device: {DEVICE}")
-    print(f"Loading Grounding DINO ({MODEL_ID}) …")
+    print(f"Loading {MODEL_ID} ...")
     try:
         from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
     except ImportError:
-        print("[ERROR] Install transformers:  pip install transformers")
+        print("[ERROR] pip install transformers")
         sys.exit(1)
-
     processor = AutoProcessor.from_pretrained(MODEL_ID)
-    model     = (
-        AutoModelForZeroShotObjectDetection
-        .from_pretrained(MODEL_ID)
-        .to(DEVICE)
-    )
+    model = (AutoModelForZeroShotObjectDetection
+             .from_pretrained(MODEL_ID).to(DEVICE))
     model.eval()
     print("Model ready.\n")
     return processor, model
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Core inference
-# ─────────────────────────────────────────────────────────────────────────────
-
-def run_gdino_for_class(
-    processor,
-    model,
-    pil_img: Image.Image,
-    class_id: int,
-    threshold: float,
-) -> list[tuple[float, float, float, float, float]]:
-    """
-    Run GDINO for a single class prompt.
-    Returns list of (x1, y1, x2, y2, score) in pixel coords.
-    """
+def run_gdino(processor, model, pil_img, class_id, threshold):
     img_w, img_h = pil_img.size
-    prompt = PROMPTS[class_id]
-
-    inputs = processor(
-        images=pil_img,
-        text=prompt,
-        return_tensors="pt",
-    ).to(DEVICE)
-
+    inputs = processor(images=pil_img, text=PROMPTS[class_id],
+                       return_tensors="pt").to(DEVICE)
     with torch.no_grad():
         outputs = model(**inputs)
 
     # Post-process — API-safe across transformers versions
     try:
         results = processor.post_process_grounded_object_detection(
-            outputs,
-            inputs.input_ids,
+            outputs, inputs.input_ids,
             target_sizes=[(img_h, img_w)],
         )[0]
     except TypeError:
