@@ -6,3 +6,4 @@ dataset
 yolo26n.pt
 yolov8n.pt
 output.jpg
+*.pyc
