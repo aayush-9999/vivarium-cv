@@ -1,11 +1,14 @@
 # detectors/yolo/postprocessor.py
 """
-Converts raw YOLOv8 Results object → DetectionResult.
+Converts raw YOLOv8 Results → DetectionResult.
 
-Class map:
-    0 = mouse            → counted, not measured
-    1 = water_container  → bbox passed to WaterLevelEstimator as dynamic ROI
-    2 = food_area        → bbox passed to FoodLevelEstimator  as dynamic ROI
+9-class model:
+    0            → mouse  (count only)
+    1,2,3,4      → water_critical / low / ok / full
+    5,6,7,8      → food_critical  / low / ok / full
+
+Level reading is derived directly from the detected class ID.
+No HSV estimation, no colour math.
 """
 from __future__ import annotations
 
@@ -15,49 +18,36 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
-from core.config import YOLO_CLASS_MAP
+from core.config import YOLO_CLASS_MAP, CLASS_TO_LEVEL
 from core.schemas import DetectionResult, LevelReading, BoundingBox
 from core.exceptions import InferenceError
 
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
 
-# Class indices — keep in sync with core/config.py and vivarium.yaml
-CLASS_MOUSE           = 0
-CLASS_WATER_CONTAINER = 1
-CLASS_FOOD_AREA       = 2
+CLASS_MOUSE       = 0
+WATER_CLASS_IDS   = {1, 2, 3, 4}
+FOOD_CLASS_IDS    = {5, 6, 7, 8}
 
 
 def parse_yolo_results(
     results: list["Results"],
     cage_id: str,
-    water_reading: LevelReading,
-    food_reading: LevelReading,
     inference_start_ns: int,
-    water_bbox: Optional[BoundingBox] = None,
-    food_bbox:  Optional[BoundingBox] = None,
 ) -> DetectionResult:
     """
-    Build a DetectionResult from Ultralytics Results + pre-computed level readings.
-
-    Args:
-        results:            Output of model.predict() — list with one Results object.
-        cage_id:            Cage identifier string.
-        water_reading:      Already-computed LevelReading for water.
-        food_reading:       Already-computed LevelReading for food.
-        inference_start_ns: time.perf_counter_ns() captured before model.predict().
-        water_bbox:         BoundingBox of the detected water container (or None).
-        food_bbox:          BoundingBox of the detected food area (or None).
-
-    Returns:
-        Fully populated DetectionResult.
+    Build a DetectionResult from Ultralytics Results.
+    Level readings come from the detected class ID — no external estimator needed.
     """
     if not results:
         raise InferenceError("YOLO returned empty results list.")
 
-    r = results[0]   # single-image inference → always one Results object
+    r = results[0]
     inference_ms = int((time.perf_counter_ns() - inference_start_ns) / 1_000_000)
-    mouse_count  = _count_class(r, target_class=CLASS_MOUSE)
+    mouse_count  = _count_class(r, CLASS_MOUSE)
+
+    water_reading, water_bbox = _best_level_reading(r, WATER_CLASS_IDS)
+    food_reading,  food_bbox  = _best_level_reading(r, FOOD_CLASS_IDS)
 
     return DetectionResult(
         cage_id=cage_id,
@@ -72,62 +62,48 @@ def parse_yolo_results(
     )
 
 
-def extract_container_bboxes(
-    results: list["Results"],
-) -> tuple[Optional[BoundingBox], Optional[BoundingBox]]:
+def _best_level_reading(
+    r: "Results",
+    target_classes: set[int],
+) -> tuple[LevelReading, Optional[BoundingBox]]:
     """
-    Pull the highest-confidence water_container and food_area detections
-    from YOLO results and return them as BoundingBox objects.
-
-    Returns:
-        (water_bbox, food_bbox) — either can be None if not detected.
+    Among all detections matching target_classes, pick the highest-confidence one.
+    Returns (LevelReading derived from class ID, BoundingBox).
+    Falls back to LevelReading.unknown() if nothing detected.
     """
-    if not results:
-        return None, None
-
-    r = results[0]
     if r.boxes is None or len(r.boxes) == 0:
-        return None, None
+        return LevelReading.unknown(), None
 
     try:
-        boxes   = r.boxes.xyxy.cpu().numpy()              # (N, 4)
-        confs   = r.boxes.conf.cpu().numpy()              # (N,)
-        classes = r.boxes.cls.cpu().numpy().astype(int)   # (N,)
+        boxes   = r.boxes.xyxy.cpu().numpy()
+        confs   = r.boxes.conf.cpu().numpy()
+        classes = r.boxes.cls.cpu().numpy().astype(int)
     except Exception as e:
-        raise InferenceError(f"Failed to extract YOLO boxes: {e}") from e
+        raise InferenceError(f"Failed to parse YOLO boxes: {e}") from e
 
-    water_bbox = _best_box_for_class(boxes, confs, classes, CLASS_WATER_CONTAINER)
-    food_bbox  = _best_box_for_class(boxes, confs, classes, CLASS_FOOD_AREA)
+    best_conf  = -1.0
+    best_cls   = None
+    best_box   = None
 
-    return water_bbox, food_bbox
+    for box, conf, cls in zip(boxes, confs, classes):
+        if int(cls) in target_classes and float(conf) > best_conf:
+            best_conf = float(conf)
+            best_cls  = int(cls)
+            best_box  = box
 
+    if best_cls is None:
+        return LevelReading.unknown(), None
 
-def _best_box_for_class(
-    boxes: np.ndarray,
-    confs: np.ndarray,
-    classes: np.ndarray,
-    target_class: int,
-) -> Optional[BoundingBox]:
-    """Return the highest-confidence detection for a given class, or None."""
-    mask = classes == target_class
-    if not np.any(mask):
-        return None
-
-    idx  = int(np.argmax(np.where(mask, confs, -1)))
-    box  = boxes[idx]
-    conf = float(confs[idx])
-
-    return BoundingBox(
-        x1=float(box[0]),
-        y1=float(box[1]),
-        x2=float(box[2]),
-        y2=float(box[3]),
-        conf=conf,
+    reading = LevelReading.from_class_id(best_cls)
+    bbox    = BoundingBox(
+        x1=float(best_box[0]), y1=float(best_box[1]),
+        x2=float(best_box[2]), y2=float(best_box[3]),
+        conf=best_conf,
     )
+    return reading, bbox
 
 
 def _count_class(r: "Results", target_class: int) -> int:
-    """Count detections of a given class index in a Results object."""
     if r.boxes is None or len(r.boxes) == 0:
         return 0
     try:
@@ -137,16 +113,10 @@ def _count_class(r: "Results", target_class: int) -> int:
         raise InferenceError(f"Failed to parse YOLO box classes: {e}") from e
 
 
-def extract_boxes(
-    r: "Results",
-    frame_shape: tuple[int, int],
-) -> list[dict]:
-    """
-    Extract all bounding boxes as dicts for optional saving / downstream use.
-    """
+def extract_boxes(r: "Results") -> list[dict]:
+    """Extract all boxes as dicts for logging/debug."""
     if r.boxes is None or len(r.boxes) == 0:
         return []
-
     out = []
     try:
         boxes   = r.boxes.xyxy.cpu().numpy()
@@ -162,5 +132,4 @@ def extract_boxes(
             "conf":     float(round(conf, 3)),
             "xyxy":     tuple(float(v) for v in box),
         })
-
     return out

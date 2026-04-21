@@ -5,27 +5,68 @@ import os
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR   = Path(__file__).resolve().parent.parent
 MODELS_DIR = BASE_DIR / "models"
-FRAMES_DIR = BASE_DIR / "frames"   # flagged frames saved here
+FRAMES_DIR = BASE_DIR / "frames"
 
 YOLO_WEIGHTS = MODELS_DIR / "yolo" / "best.pt"
 
 # ── Model input ───────────────────────────────────────────────────────────────
-INPUT_SIZE = (640, 640)   # (width, height)
+INPUT_SIZE = (640, 640)
 
-# ── YOLO class mapping ────────────────────────────────────────────────────────
-YOLO_CLASS_NAMES = ["mouse", "water_container", "food_area"]
+# ── YOLO 9-class map ──────────────────────────────────────────────────────────
+#
+#  class 0 : mouse
+#
+#  classes 1–4 : water container at different fill levels
+#  class 1 : water_critical   (0–15%)
+#  class 2 : water_low        (15–35%)
+#  class 3 : water_ok         (35–80%)
+#  class 4 : water_full       (80–100%)
+#
+#  classes 5–8 : food area at different fill levels
+#  class 5 : food_critical    (0–15%)
+#  class 6 : food_low         (15–35%)
+#  class 7 : food_ok          (35–80%)
+#  class 8 : food_full        (80–100%)
 
-YOLO_CLASS_MAP: dict[int, str] = {
-    0: "mouse",
-    1: "water_container",
-    2: "food_area",
+YOLO_CLASS_NAMES = [
+    "mouse",
+    "water_critical", "water_low", "water_ok", "water_full",
+    "food_critical",  "food_low",  "food_ok",  "food_full",
+]
+
+YOLO_CLASS_MAP: dict[int, str] = {i: n for i, n in enumerate(YOLO_CLASS_NAMES)}
+
+# Maps class ID → (type, status, representative pct)
+CLASS_TO_LEVEL: dict[int, tuple[str, str, float]] = {
+    1: ("water", "CRITICAL",  7.5),
+    2: ("water", "LOW",      25.0),
+    3: ("water", "OK",       57.5),
+    4: ("water", "OK",       90.0),
+    5: ("food",  "CRITICAL",  7.5),
+    6: ("food",  "LOW",      25.0),
+    7: ("food",  "OK",       57.5),
+    8: ("food",  "OK",       90.0),
 }
 
-# ── Confidence / NMS thresholds ───────────────────────────────────────────────
+# Fill fraction → class ID used by augment.py
+WATER_CLASS_BOUNDARIES = [
+    (0.00, 0.15, 1),
+    (0.15, 0.35, 2),
+    (0.35, 0.80, 3),
+    (0.80, 1.01, 4),
+]
+FOOD_CLASS_BOUNDARIES = [
+    (0.00, 0.15, 5),
+    (0.15, 0.35, 6),
+    (0.35, 0.80, 7),
+    (0.80, 1.01, 8),
+]
+
+# ── Detection thresholds ──────────────────────────────────────────────────────
 YOLO_CONF_THRESHOLD: float = 0.35
 YOLO_IOU_THRESHOLD:  float = 0.45
 
-# ── ROI zones per cage (x, y, w, h) in 640×640 pixel space ───────────────────
+# ── ROI zones (fallback only — used when YOLO misses a container) ─────────────
 ROI_ZONES = {
     "default": {
         "jug":    (480, 80,  140, 300),
@@ -39,20 +80,18 @@ ROI_ZONES = {
     },
 }
 
-# ── Level thresholds (%) ──────────────────────────────────────────────────────
+# ── Level thresholds (kept for fallback / display use) ────────────────────────
 LEVEL_THRESHOLDS = {
-    "CRITICAL": 15.0,   # below 15% → CRITICAL
-    "LOW":      35.0,   # below 35% → LOW
+    "CRITICAL": 15.0,
+    "LOW":      35.0,
 }
 
 # ── Inference scheduling ──────────────────────────────────────────────────────
-INFERENCE_INTERVAL_SEC = 300   # 5 min baseline polling
-MOTION_PIXEL_THRESHOLD = 0.05  # 5% of pixels changed = motion
-MOTION_CHECK_INTERVAL  = 30    # seconds between motion checks
+INFERENCE_INTERVAL_SEC = 300
+MOTION_PIXEL_THRESHOLD = 0.05
+MOTION_CHECK_INTERVAL  = 30
 
 # ── Frame saving ──────────────────────────────────────────────────────────────
-SAVE_FLAGGED_FRAMES = True     # save frame when status is LOW or CRITICAL
-STALE_READING_MIN   = 15       # minutes before CageStatus.is_stale = True
-
-# ── Alert cooldown ────────────────────────────────────────────────────────────
-ALERT_COOLDOWN_SECONDS: int = 600   # 10 min between repeated alerts per cage
+SAVE_FLAGGED_FRAMES    = True
+STALE_READING_MIN      = 15
+ALERT_COOLDOWN_SECONDS = 600
