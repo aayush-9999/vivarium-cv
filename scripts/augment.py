@@ -283,6 +283,15 @@ def apply_synthetic_levels(img, water_bbox, food_bbox, water_frac, food_frac):
 
     return out
 
+def _letterbox(img, size=640):
+    h, w    = img.shape[:2]
+    scale   = size / max(h, w)
+    new_w, new_h = int(w * scale), int(h * scale)
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    canvas  = np.full((size, size, 3), 114, dtype=np.uint8)
+    top, left = (size - new_h) // 2, (size - new_w) // 2
+    canvas[top:top + new_h, left:left + new_w] = resized
+    return canvas
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parameter sampler
