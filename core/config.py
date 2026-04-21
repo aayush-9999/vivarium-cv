@@ -22,8 +22,8 @@ YOLO_CLASS_MAP = {
 }
 
 # ── Confidence thresholds ────────────────────────────────────────
-YOLO_CONF_THRESHOLD = 0.35   # lower a bit — containers are easy to miss at 0.45
-YOLO_IOU_THRESHOLD  = 0.45
+YOLO_CONF_THRESHOLD = 0.45  # lower a bit — containers are easy to miss at 0.45
+YOLO_IOU_THRESHOLD  = 0.30
 
 # ── ROI zones per cage (x, y, w, h) in pixels ───────────────────
 # These assume 640x640 input. Recalibrate after first camera mount.
