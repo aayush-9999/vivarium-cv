@@ -1,15 +1,4 @@
 # detectors/yolo/postprocessor.py
-"""
-Converts raw YOLOv8 Results → DetectionResult.
-
-9-class model:
-    0            → mouse  (count only)
-    1,2,3,4      → water_critical / low / ok / full
-    5,6,7,8      → food_critical  / low / ok / full
-
-Level reading is derived directly from the detected class ID.
-No HSV estimation, no colour math.
-"""
 from __future__ import annotations
 
 import time
@@ -25,9 +14,9 @@ from core.exceptions import InferenceError
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
 
-CLASS_MOUSE       = 0
-WATER_CLASS_IDS   = {1, 2, 3, 4}
-FOOD_CLASS_IDS    = {5, 6, 7, 8}
+CLASS_MOUSE     = 0
+WATER_CLASS_IDS = {1, 2, 3, 4}
+FOOD_CLASS_IDS  = {5, 6, 7, 8}
 
 
 def parse_yolo_results(
@@ -35,14 +24,10 @@ def parse_yolo_results(
     cage_id: str,
     inference_start_ns: int,
 ) -> DetectionResult:
-    """
-    Build a DetectionResult from Ultralytics Results.
-    Level readings come from the detected class ID — no external estimator needed.
-    """
     if not results:
         raise InferenceError("YOLO returned empty results list.")
 
-    r = results[0]
+    r            = results[0]
     inference_ms = int((time.perf_counter_ns() - inference_start_ns) / 1_000_000)
     mouse_count  = _count_class(r, CLASS_MOUSE)
 
@@ -66,11 +51,6 @@ def _best_level_reading(
     r: "Results",
     target_classes: set[int],
 ) -> tuple[LevelReading, Optional[BoundingBox]]:
-    """
-    Among all detections matching target_classes, pick the highest-confidence one.
-    Returns (LevelReading derived from class ID, BoundingBox).
-    Falls back to LevelReading.unknown() if nothing detected.
-    """
     if r.boxes is None or len(r.boxes) == 0:
         return LevelReading.unknown(), None
 
@@ -81,9 +61,9 @@ def _best_level_reading(
     except Exception as e:
         raise InferenceError(f"Failed to parse YOLO boxes: {e}") from e
 
-    best_conf  = -1.0
-    best_cls   = None
-    best_box   = None
+    best_conf = -1.0
+    best_cls  = None
+    best_box  = None
 
     for box, conf, cls in zip(boxes, confs, classes):
         if int(cls) in target_classes and float(conf) > best_conf:
@@ -114,7 +94,6 @@ def _count_class(r: "Results", target_class: int) -> int:
 
 
 def extract_boxes(r: "Results") -> list[dict]:
-    """Extract all boxes as dicts for logging/debug."""
     if r.boxes is None or len(r.boxes) == 0:
         return []
     out = []
