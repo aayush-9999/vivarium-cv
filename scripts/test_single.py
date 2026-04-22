@@ -219,3 +219,10 @@ if __name__ == "__main__":
     ap.add_argument("--iou",     type=float, default=DEFAULT_IOU)
     args = ap.parse_args()
     main(args.image, args.weights, args.out, args.conf, args.iou)
+
+
+
+# python scripts/label_tools.py verify --img-dir dataset/augmented/images
+# python scripts/label_tools.py dedup --dry-run
+# python scripts/label_tools.py clean --dry-run
+# python scripts/label_tools.py fix-classes --dry-run
