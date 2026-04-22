@@ -40,8 +40,8 @@ class OrchestratorConfig:
     train_ratio:  float = 0.85
 
     # Inference
-    conf:         float = 0.45
-    iou:          float = 0.30
+    conf: float = 0.35
+    iou:  float = 0.45
 
     # Label cleaning (passed to label_tools)
     max_food_area: float = 0.12

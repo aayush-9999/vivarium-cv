@@ -6,7 +6,7 @@ runs the full YOLO pipeline, persists to DB, returns DetectionResult.
 from __future__ import annotations
 
 import io
-import numpy as np
+import numpy as np  
 import cv2
 
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Depends
@@ -62,10 +62,10 @@ async def infer(
     # ── Run pipeline ───────────────────────────────────────────────
     try:
         pipeline = _get_pipeline()
-        result   = pipeline.run(
+        result = pipeline.run(
             frame=bgr_frame,
             cage_id=cage_id,
-            save_flagged=save_flagged,
+            save_flagged=True,
         )
     except VivariumCVError as e:
         raise HTTPException(status_code=500, detail=str(e))

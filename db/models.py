@@ -1,5 +1,4 @@
-from sqlalchemy import Column, BigInteger, SmallInteger, String, Numeric, Boolean, Text
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ
+from sqlalchemy import Column, BigInteger, SmallInteger, String, Numeric, Boolean, Text, DateTime
 from sqlalchemy.orm import DeclarativeBase
 
 class Base(DeclarativeBase):
@@ -9,7 +8,7 @@ class CageReading(Base):
     __tablename__ = "cage_readings"
     id           = Column(BigInteger, primary_key=True, autoincrement=True)
     cage_id      = Column(String(20), nullable=False, index=True)
-    recorded_at  = Column(TIMESTAMPTZ, nullable=False, index=True)
+    recorded_at  = Column(DateTime(timezone=True), nullable=False, index=True)
     mouse_count  = Column(SmallInteger)
     water_pct    = Column(Numeric(5, 2))
     water_status = Column(String(10))
@@ -23,6 +22,6 @@ class Alert(Base):
     id           = Column(BigInteger, primary_key=True, autoincrement=True)
     cage_id      = Column(String(20), index=True)
     alert_type   = Column(String(20))
-    triggered_at = Column(TIMESTAMPTZ)
-    resolved_at  = Column(TIMESTAMPTZ, nullable=True)
+    triggered_at = Column(DateTime(timezone=True))
+    resolved_at  = Column(DateTime(timezone=True), nullable=True)
     notified     = Column(Boolean, default=False)

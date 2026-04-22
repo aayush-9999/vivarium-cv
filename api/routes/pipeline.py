@@ -33,6 +33,10 @@ from typing import Optional
 from core.schemas import DetectionResult
 from core.exceptions import VivariumCVError
 from pipeline.pipeline_factory import get_orchestrator
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends
+from db.session import get_db
+from db.crud import save_detection
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
@@ -102,6 +106,7 @@ async def pipeline_infer(
     cage_id:      str        = Form(...),
     frame:        UploadFile = File(...),
     save_flagged: bool       = Form(False),
+    db: AsyncSession         = Depends(get_db),
 ):
     """
     Run the full inference pipeline on an uploaded frame.
@@ -117,7 +122,9 @@ async def pipeline_infer(
         raise HTTPException(422, "Cannot decode image — must be JPEG or PNG.")
 
     try:
-        return _get_orch().infer(bgr, cage_id=cage_id, save_flagged=save_flagged)
+        result = _get_orch().infer(bgr, cage_id=cage_id, save_flagged=save_flagged)
+        await save_detection(db, result)
+        return result
     except VivariumCVError as e:
         raise HTTPException(500, str(e))
 
