@@ -35,7 +35,6 @@ class LevelReading(BaseModel):
         """
         from core.config import CLASS_TO_LEVEL
         if class_id not in CLASS_TO_LEVEL:
-            # Unknown class — default to CRITICAL so alert fires
             return cls(pct=0.0, status="CRITICAL")
         _, status, pct = CLASS_TO_LEVEL[class_id]
         return cls(pct=pct, status=status)

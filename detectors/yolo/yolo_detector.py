@@ -1,15 +1,11 @@
 # detectors/yolo/yolo_detector.py
-"""
-YOLOv8-nano detector — 9-class vivarium model.
-Level estimation is done by the class ID, not HSV.
-"""
 from __future__ import annotations
 
 import time
 import numpy as np
 
 from core.base_detector import BaseDetector
-from core.schemas import DetectionResult, LevelReading
+from core.schemas import DetectionResult
 from core.config import YOLO_CONF_THRESHOLD, YOLO_IOU_THRESHOLD
 from core.exceptions import DetectorInitError, InferenceError
 from detectors.yolo.postprocessor import parse_yolo_results
@@ -34,11 +30,6 @@ class YOLODetector(BaseDetector):
             raise DetectorInitError(f"Failed to load YOLO model: {e}") from e
 
     def detect(self, frame: np.ndarray, cage_id: str) -> DetectionResult:
-        """
-        Run inference. Returns a fully populated DetectionResult.
-        Water/food level is read directly from the detected class ID.
-        No HSV estimators, no second pass needed.
-        """
         if not self.is_ready():
             raise InferenceError("Model is not loaded.")
 
@@ -54,11 +45,18 @@ class YOLODetector(BaseDetector):
                 verbose=False,
             )
         except Exception as e:
-            raise InferenceError(f"YOLO inference failed for cage '{cage_id}': {e}") from e
+            raise InferenceError(
+                f"YOLO inference failed for cage '{cage_id}': {e}"
+            ) from e
 
         return self._postprocess(results, cage_id, t_start)
 
-    def _postprocess(self, raw_output, cage_id: str, inference_start_ns: int = 0) -> DetectionResult:
+    def _postprocess(
+        self,
+        raw_output,
+        cage_id: str,
+        inference_start_ns: int = 0,
+    ) -> DetectionResult:
         return parse_yolo_results(
             results=raw_output,
             cage_id=cage_id,

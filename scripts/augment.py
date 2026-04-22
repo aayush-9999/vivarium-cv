@@ -32,17 +32,17 @@ Workflow:
     python scripts/split_dataset.py
     python scripts/train.py
 """
-
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import argparse
 import json
 import math
 import os
 import random
 import sys
-from pathlib import Path
-
 import cv2
 import numpy as np
 

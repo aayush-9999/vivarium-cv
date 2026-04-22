@@ -66,7 +66,7 @@ FOOD_CLASS_BOUNDARIES = [
 YOLO_CONF_THRESHOLD: float = 0.35
 YOLO_IOU_THRESHOLD:  float = 0.45
 
-# ── ROI zones (fallback only — used when YOLO misses a container) ─────────────
+# ── ROI zones (fallback only) ─────────────────────────────────────────────────
 ROI_ZONES = {
     "default": {
         "jug":    (480, 80,  140, 300),
@@ -80,7 +80,7 @@ ROI_ZONES = {
     },
 }
 
-# ── Level thresholds (kept for fallback / display use) ────────────────────────
+# ── Level thresholds ──────────────────────────────────────────────────────────
 LEVEL_THRESHOLDS = {
     "CRITICAL": 15.0,
     "LOW":      35.0,
