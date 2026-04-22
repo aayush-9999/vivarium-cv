@@ -2,8 +2,10 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from db.models import Base
+from dotenv import load_dotenv
+load_dotenv()
 
-DATABASE_URL = os.getenv("DB_URL", "postgresql+asyncpg://postgres:password@db:5432/vivarium")
+DATABASE_URL = os.getenv("DB_URL", "postgresql+asyncpg://postgres:password@localhost:5432/vivarium")
 
 engine         = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)

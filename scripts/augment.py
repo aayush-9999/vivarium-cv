@@ -323,8 +323,8 @@ def main(src, dst, src_labels, n, seed, img_size, quality):
         # GDINO used classes 1/2; we use them only for overlay position, not class
         all_lb = letterbox_labels(raw_labels, scale, pad_top, pad_left,
                                   orig_h, orig_w, img_size)
-        water_bbox_n = next(((cx,cy,bw,bh) for (c,cx,cy,bw,bh) in all_lb if c==1), None)
-        food_bbox_n  = next(((cx,cy,bw,bh) for (c,cx,cy,bw,bh) in all_lb if c==2), None)
+        water_bbox_n = next(((cx,cy,bw,bh) for (c,cx,cy,bw,bh) in all_lb if c in {1,2,3,4}), None)
+        food_bbox_n  = next(((cx,cy,bw,bh) for (c,cx,cy,bw,bh) in all_lb if c in {5,6,7,8}), None)
 
         # Save original
         orig_name = f"{stem}_orig.jpg"

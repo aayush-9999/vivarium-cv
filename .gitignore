@@ -7,3 +7,4 @@ yolo26n.pt
 yolov8n.pt
 output.jpg
 *.pyc
+flagged_frames

@@ -58,9 +58,9 @@ class YOLOPipeline:
         # Single YOLO pass → mouse count + water level + food level
         result = self.detector.detect(frame=frame_640, cage_id=cage_id)
 
-        # Save frame if CRITICAL
         if save_flagged and self._should_flag(result):
-            image_path = self._save_frame(frame_640, cage_id, output_dir)
+            annotated = _draw_result(frame_640, result)
+            image_path = self._save_frame(annotated, cage_id, output_dir)
             result = result.model_copy(update={"image_path": image_path})
 
         return result
