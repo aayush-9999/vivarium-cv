@@ -18,7 +18,7 @@ def register_middleware(app: FastAPI) -> None:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],          # tighten in production
-        allow_credentials=True,
+        allow_credentials=False,      # can't be True when origins=["*"]
         allow_methods=["*"],
         allow_headers=["*"],
     )

@@ -4,19 +4,18 @@ POST /infer — accepts a JPEG/PNG frame upload and cage_id,
 runs the full YOLO pipeline, persists to DB, returns DetectionResult.
 """
 from __future__ import annotations
-
-import io
 import numpy as np  
 import cv2
 
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from core.schemas import DetectionResult
 from core.exceptions import VivariumCVError
 from pipeline.pipeline_factory import get_pipeline
-from db.session import get_db          # you'll wire this in db/session.py
+from db.session import get_db         
 from db.crud import save_detection     # thin write helper
+import logging
+logger = logging.getLogger("vivarium.api")
 
 router = APIRouter(prefix="/infer", tags=["inference"])
 
@@ -71,6 +70,10 @@ async def infer(
         raise HTTPException(status_code=500, detail=str(e))
 
     # ── Persist to DB ──────────────────────────────────────────────
-    await save_detection(db, result)
+    try:
+        await save_detection(db, result)
+    except Exception as e:
+        logger.error("DB write failed for cage '%s': %s", cage_id, e)
+        # inference succeeded — return result even if DB write failed
 
     return result

@@ -7,7 +7,14 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DB_URL", "postgresql+asyncpg://postgres:password@localhost:5432/vivarium")
 
-engine         = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

@@ -36,9 +36,11 @@ class BaseDetector(ABC):
         """
         Run one dummy inference on init so first real frame
         doesn't pay the CUDA kernel launch cost.
+        Subclasses must override this with the correct input shape
+        for their model (e.g. HWC uint8 for YOLO, NCHW float for ONNX).
         """
-        dummy = np.zeros((1, 3, 640, 640), dtype=np.float32)
-        self.detect(dummy, cage_id="warmup")
+        dummy = np.zeros((640, 640, 3), dtype=np.uint8)
+        self.detect(dummy, cage_id="__warmup__")
 
     def is_ready(self) -> bool:
         return self.model is not None

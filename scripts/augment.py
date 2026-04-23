@@ -121,8 +121,6 @@ def rotate_labels(labels, angle_deg, img_size):
     for (cls, cx_n, cy_n, bw_n, bh_n) in labels:
         cx_px, cy_px = cx_n*img_size, cy_n*img_size
         bw_px, bh_px = bw_n*img_size, bh_n*img_size
-        x1,y1 = cx_px-bw_px/2, cy_px-bh_px/2
-        x2,y2 = cx_px+bw_px/2, cy_py-bh_px/2 if False else cy_px-bh_px/2
         corners = [rot(x,y) for x,y in [
             (cx_px-bw_px/2, cy_px-bh_px/2),
             (cx_px+bw_px/2, cy_px-bh_px/2),
