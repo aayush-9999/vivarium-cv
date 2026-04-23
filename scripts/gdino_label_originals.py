@@ -4,14 +4,20 @@ scripts/gdino_label_originals.py
 Run GDINO only on ORIGINAL (pre-augmentation) images.
 Then copy + propagate those labels to all augmented variants.
 
-Class rules:
+GDINO's job here is ONLY:
+    - Find WHERE mice are  (class 0) → propagated as-is to augmented variants
+    - Find WHERE the water container is  (class 1) → bbox position only, used
+      by augment.py for overlay placement; class ID is irrelevant and ignored
+    - Find WHERE the food area is  (class 2) → same as above
+
+GDINO cannot and does not classify fill levels.  The 9-class water/food
+labels (water_critical … food_full) are assigned entirely by augment.py
+based on the randomly sampled fill fraction for each augmented variant.
+
+Class rules (GDINO internal only, not written to final 9-class labels):
     0 = mouse           → multiple allowed (real lab cages can have many)
     1 = water_container → max 1 (one bottle per cage)
     2 = food_area       → multiple allowed (hopper + pile can be separate detections)
-
-Prompts are color-agnostic — GDINO handles visual matching internally.
-Water container is still described by shape/position since transparent
-objects need context clues more than color ones.
 
 Usage:
     python scripts/gdino_label_originals.py
@@ -25,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -47,8 +54,10 @@ IMG_SIZE  = 640
 MODEL_ID = "IDEA-Research/grounding-dino-tiny"
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
-# Color-agnostic — GDINO handles visual matching internally.
-# Describe shape, context, and location rather than color.
+# CHANGE 1: Simplified water prompt — removed over-specified adjectives like
+# "inverted", "upside down", "see-through" which hurt GDINO recall.
+# GDINO matches noun phrases better than adjective-heavy descriptions.
+# Kept context clues (cage, spout, mounted) that help localise the bottle.
 PROMPTS = {
     0: (
         "laboratory mouse. "
@@ -57,10 +66,12 @@ PROMPTS = {
         "mouse on wood shavings."
     ),
     1: (
-        "inverted transparent plastic bottle on top of cage. "
-        "clear upside down water bottle. "
-        "transparent drinking bottle mounted on cage. "
-        "see-through plastic water dispenser on cage lid."
+        "water bottle. "
+        "drinking bottle. "
+        "plastic sipper bottle. "
+        "rodent water dispenser. "
+        "transparent bottle with metal spout. "
+        "bottle mounted on cage."
     ),
     2: (
         "food pellets in wire hopper. "
@@ -74,8 +85,8 @@ PROMPTS = {
 # ── Confidence thresholds ─────────────────────────────────────────────────────
 DEFAULT_THRESHOLDS = {
     0: 0.25,   # mouse      — moderate, multiple mice expected
-    1: 0.32,   # water      — higher, only 1 bottle, want confident detection
-    2: 0.28,   # food       — moderate, multiple food areas expected
+    1: 0.30,   # water      — slightly lowered; simpler prompt improves precision
+    2: 0.25,   # food       — slightly lowered to improve bbox recall
 }
 
 # ── NMS IoU per class ─────────────────────────────────────────────────────────
@@ -133,7 +144,13 @@ def load_model():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_gdino(processor, model, pil_img, class_id, threshold):
+    # CHANGE 2: Assert image is always 640×640 after _letterbox_pil so coord
+    # normalisation in xyxy_to_yolo_str is guaranteed to be correct.
     img_w, img_h = pil_img.size
+    assert img_w == IMG_SIZE and img_h == IMG_SIZE, (
+        f"Expected {IMG_SIZE}×{IMG_SIZE} after letterbox, got {img_w}×{img_h}"
+    )
+
     inputs = processor(
         images=pil_img,
         text=PROMPTS[class_id],
@@ -143,18 +160,20 @@ def run_gdino(processor, model, pil_img, class_id, threshold):
     with torch.no_grad():
         outputs = model(**inputs)
 
-    try:
-        results = processor.post_process_grounded_object_detection(
-            outputs, inputs.input_ids,
-            target_sizes=[(img_h, img_w)],
-        )[0]
-    except TypeError:
-        results = processor.post_process_grounded_object_detection(
-            outputs, inputs.input_ids,
-            box_threshold=threshold,
-            text_threshold=threshold,
-            target_sizes=[(img_h, img_w)],
-        )[0]
+    # CHANGE 3: Replaced fragile try/except with explicit threshold args.
+    # text_threshold is set lower than box_threshold because they are
+    # conceptually different — text_threshold controls token-level matching
+    # confidence and should always be more permissive.  Using the same value
+    # for both (as the old fallback did) caused valid detections to be silently
+    # dropped at the text-matching stage, especially for the water class at 0.32.
+    text_thresh = max(0.10, threshold * 0.6)
+    results = processor.post_process_grounded_object_detection(
+        outputs,
+        inputs.input_ids,
+        box_threshold=threshold,
+        text_threshold=text_thresh,
+        target_sizes=[(img_h, img_w)],
+    )[0]
 
     boxes  = results["boxes"].cpu()
     scores = results["scores"].cpu()
@@ -244,22 +263,14 @@ def save_debug(pil_img, all_dets, rejected, img_path, debug_dir):
     Save debug image:
         Coloured boxes = kept detections
         Grey boxes     = rejected by size filter
+
+    CHANGE 4 (minor): Draw rejected boxes AFTER kept boxes so kept labels
+    are never buried under grey rejected-box text.
     """
     debug_dir.mkdir(exist_ok=True)
     img_cv = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
-    # Rejected — grey, thin
-    for cls_id, dets in rejected.items():
-        for (x1, y1, x2, y2), score in dets:
-            cv2.rectangle(img_cv,
-                          (int(x1), int(y1)), (int(x2), int(y2)),
-                          (100, 100, 100), 1)
-            cv2.putText(img_cv,
-                        f"SKIP {CLASS_NAMES[cls_id]} {score:.2f}",
-                        (int(x1), max(int(y1) - 4, 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
-
-    # Kept — class color, thick
+    # Kept — class color, thick  (drawn first so rejected labels overlay on top)
     for cls_id, dets in all_dets.items():
         color = CLASS_COLORS[cls_id]
         for (x1, y1, x2, y2), score in dets:
@@ -270,6 +281,17 @@ def save_debug(pil_img, all_dets, rejected, img_path, debug_dir):
                         f"{CLASS_NAMES[cls_id]} {score:.2f}",
                         (int(x1), max(int(y1) - 6, 10)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+    # Rejected — grey, thin  (drawn on top so they're visible for review)
+    for cls_id, dets in rejected.items():
+        for (x1, y1, x2, y2), score in dets:
+            cv2.rectangle(img_cv,
+                          (int(x1), int(y1)), (int(x2), int(y2)),
+                          (100, 100, 100), 1)
+            cv2.putText(img_cv,
+                        f"SKIP {CLASS_NAMES[cls_id]} {score:.2f}",
+                        (int(x1), max(int(y1) - 4, 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
 
     cv2.imwrite(str(debug_dir / img_path.name), img_cv)
 
@@ -369,11 +391,23 @@ def _letterbox_pil(pil_img, size):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def propagate_labels(stem_to_boxes):
+    """
+    Copy GDINO mouse-only labels to augmented variants.
+
+    CHANGE 5: Only propagate class 0 (mouse) boxes.  GDINO stores water/food
+    with class IDs 1 and 2 (its internal 3-class scheme).  augment.py already
+    writes the correct 9-class water/food labels (classes 1–8) based on
+    fill fraction, so propagating GDINO's class 1/2 here would silently
+    overwrite those correct labels with wrong class IDs.
+    Mouse boxes are safe to propagate because class 0 is the same in both
+    the 3-class GDINO scheme and the 9-class pipeline scheme.
+    """
     aug_images = sorted(IMG_DIR.glob("*.jpg"))
     updated = 0
     skipped = 0
 
-    print(f"\nPropagating labels to {len(aug_images)} augmented images …\n")
+    print(f"\nPropagating mouse labels to {len(aug_images)} augmented images …\n")
+    print("  (water/food bbox labels are written by augment.py — not propagated here)\n")
 
     for img_path in aug_images:
         stem = img_path.stem
@@ -398,21 +432,37 @@ def propagate_labels(stem_to_boxes):
 
         lines = []
         for (cls_id, cx, cy, bw, bh) in boxes:
+            # CHANGE 5 continued: skip water (1) and food (2) GDINO boxes
+            if cls_id != 0:
+                continue
             if was_flipped:
                 cx, cy, bw, bh = mirror_yolo_box(cx, cy, bw, bh)
-            lines.append(f"{cls_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+            lines.append(f"0 {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
 
-        (LABEL_DIR / (stem + ".txt")).write_text("\n".join(lines))
-        updated += 1
+        # Only write if there are mouse boxes; otherwise leave augment.py label intact
+        if lines:
+            existing_path = LABEL_DIR / (stem + ".txt")
+            if existing_path.exists():
+                # Merge: keep existing water/food lines, replace/add mouse lines
+                existing = existing_path.read_text(encoding="utf-8").strip().splitlines()
+                non_mouse = [l for l in existing if l and not l.startswith("0 ")]
+                merged = lines + non_mouse
+                existing_path.write_text("\n".join(merged), encoding="utf-8")
+            else:
+                existing_path.write_text("\n".join(lines), encoding="utf-8")
+            updated += 1
 
     print(f"  Updated : {updated} label files")
     print(f"  Skipped : {skipped} (no matching base found)")
 
 
-def _extract_base_stem(aug_stem):
-    if "_aug" in aug_stem:
-        return aug_stem[:aug_stem.index("_aug")]
-    return aug_stem
+# CHANGE 6: More robust base stem extraction using regex.
+# Old: aug_stem[:aug_stem.index("_aug")] would break if the original filename
+# itself contained "_aug" (e.g. "cage_augmented_01_aug0001_wok_fok").
+# New: match the specific _augNNNN pattern so only the augment.py suffix is stripped.
+def _extract_base_stem(aug_stem: str) -> str:
+    m = re.match(r"^(.+)_aug\d{4}", aug_stem)
+    return m.group(1) if m else aug_stem
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -429,7 +479,7 @@ def main(propagate, thresholds):
 
     if propagate:
         print("\n" + "=" * 60)
-        print("Step 2: Propagate to augmented variants")
+        print("Step 2: Propagate mouse labels to augmented variants")
         print("=" * 60)
         propagate_labels(stem_to_boxes)
 
@@ -458,7 +508,7 @@ To tune:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--propagate",        action="store_true",
-                    help="Copy labels from originals to all augmented variants")
+                    help="Copy mouse labels from originals to all augmented variants")
     ap.add_argument("--mouse-thresh",     type=float, default=DEFAULT_THRESHOLDS[0])
     ap.add_argument("--container-thresh", type=float, default=DEFAULT_THRESHOLDS[1])
     ap.add_argument("--food-thresh",      type=float, default=DEFAULT_THRESHOLDS[2])

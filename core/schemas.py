@@ -59,19 +59,3 @@ class DetectionResult(BaseModel):
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
 
-
-class CageStatus(BaseModel):
-    cage_id:      str
-    last_updated: datetime
-    water:        LevelReading
-    food:         LevelReading
-    mouse_count:  int
-    is_stale:     bool = False
-
-
-class AlertEvent(BaseModel):
-    cage_id:      str
-    alert_type:   str
-    triggered_at: datetime
-    resolved_at:  Optional[datetime] = None
-    notified:     bool = False

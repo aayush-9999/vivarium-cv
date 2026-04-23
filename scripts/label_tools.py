@@ -156,9 +156,27 @@ def _top_right_score(b: Label) -> float:
     return cx - cy   # maximise cx, minimise cy
 
 
-def _passes_top_right(b: Label) -> bool:
+# CHANGE: Added optional label_name parameter so callers can get meaningful
+# log messages that include the filename when a water box is outside the
+# expected top-right quadrant.  This resolves the TODO comment that was
+# left in the verify() function below.
+def _passes_top_right(b: Label, label_name: str = "") -> bool:
+    """
+    Returns True if the water box sits in the expected top-right quadrant
+    (cx >= TOP_RIGHT_CX_MIN and cy <= TOP_RIGHT_CY_MAX).
+
+    If label_name is provided and the box fails, a logger.warning is emitted
+    so the file can be found and reviewed without needing to run verify().
+    """
     _, cx, cy, _, _ = b
-    return cx >= TOP_RIGHT_CX_MIN and cy <= TOP_RIGHT_CY_MAX
+    passes = cx >= TOP_RIGHT_CX_MIN and cy <= TOP_RIGHT_CY_MAX
+    if not passes and label_name:
+        logger.warning(
+            "%s: water box at cx=%.3f cy=%.3f is outside top-right quadrant "
+            "(expected cx>=%.2f, cy<=%.2f) — review manually.",
+            label_name, cx, cy, TOP_RIGHT_CX_MIN, TOP_RIGHT_CY_MAX,
+        )
+    return passes
 
 
 def _keep_one_water(water_boxes: list[Label], label_name: str = "") -> Label | None:
@@ -179,7 +197,8 @@ def _keep_one_water(water_boxes: list[Label], label_name: str = "") -> Label | N
     # First apply NMS within the water group to collapse true duplicates
     after_nms = _nms(water_boxes, iou_thresh=0.30)
 
-    in_quadrant = [b for b in after_nms if _passes_top_right(b)]
+    # CHANGE: pass label_name into _passes_top_right so warnings are actionable
+    in_quadrant = [b for b in after_nms if _passes_top_right(b, label_name=label_name)]
 
     if in_quadrant:
         return max(in_quadrant, key=_top_right_score)
@@ -326,7 +345,8 @@ def verify(
             )
         elif len(water_boxes) == 1:
             _, cx, cy, _, _ = water_boxes[0]
-            if not _passes_top_right(water_boxes[0]): #add false and true to the function and change the if statement to if not _passes_top_right(water_boxes[0], label_name=stem):""
+            # CHANGE: pass label_name=stem so the warning log includes the filename
+            if not _passes_top_right(water_boxes[0], label_name=stem):
                 issues.append(
                     f"WATER_NOT_TOP_RIGHT: {stem}.txt — "
                     f"water box cx={cx:.3f} cy={cy:.3f} is outside expected "
@@ -385,7 +405,7 @@ def clean_food(
             boxes_removed += removed
             oversized_info = "  ".join(
                 f"cls={b[0]} bw={b[3]:.2f} bh={b[4]:.2f} area={b[3]*b[4]:.3f}"
-                for b in labels if cls in FOOD_CLASS_IDS and (
+                for b in labels if b[0] in FOOD_CLASS_IDS and (
                     (b[3] * b[4]) > max_area or b[3] > max_w or b[4] > max_h
                 )
             )
