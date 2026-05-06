@@ -64,7 +64,7 @@ async def infer(
         result = pipeline.run(
             frame=bgr_frame,
             cage_id=cage_id,
-            save_flagged=True,
+            save_flagged=save_flagged,  
         )
     except VivariumCVError as e:
         raise HTTPException(status_code=500, detail=str(e))
