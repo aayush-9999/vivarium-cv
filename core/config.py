@@ -7,8 +7,11 @@ BASE_DIR   = Path(__file__).resolve().parent.parent
 MODELS_DIR = BASE_DIR / "models"
 FRAMES_DIR = BASE_DIR / "frames"
 
-YOLO_WEIGHTS = MODELS_DIR / "yolo" / "best.pt"
-
+# YOLO_WEIGHTS = MODELS_DIR / "yolo" / "best.pt"
+YOLOX_WEIGHTS = BASE_DIR / "YOLOX_outputs" / "vivarium_yolox_tiny" / "latest_ckpt.pth"
+YOLOX_EXP_FILE = BASE_DIR / "exps" / "vivarium_yolox_tiny.py"  # required experiment config
+YOLOX_INPUT_SIZE = (640, 640)   # YOLOx uses (h, w) tuples not (w, h)
+NUM_CLASSES = 9      
 # ── Model input ───────────────────────────────────────────────────────────────
 INPUT_SIZE = (640, 640)
 

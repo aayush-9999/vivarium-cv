@@ -5,10 +5,16 @@ asyncpg
 pydantic>=2.0.0
 opencv-python
 numpy>=1.26.0
-ultralytics>=8.2.0
+# ultralytics>=8.2.0
 onnxruntime>=1.18.0
 python-multipart
 python-dotenv
 labelImg
 transformers
-torch
+# torch
+yolox>=0.3.0
+torch>=1.9.0
+torchvision>=0.10.0
+loguru
+tabulate
+thop

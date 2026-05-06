@@ -8,3 +8,5 @@ yolov8n.pt
 output.jpg
 *.pyc
 flagged_frames
+YOLOX_outputs
+*.pth
