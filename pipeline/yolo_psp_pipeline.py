@@ -165,22 +165,16 @@ class YOLOPSPPipeline:
         frame: np.ndarray,
         yolo_result: DetectionResult,
     ) -> tuple[LevelReading, Optional[BoundingBox]]:
-        """
-        Crop water bottle from frame using YOLOX bbox, run PSPNet, return LevelReading.
-        Falls back to YOLOX class-based reading if crop is unavailable.
-        """
+
         bbox = yolo_result.water_bbox
 
         if bbox is None:
-            logger.debug("No water bbox from YOLOX — using YOLOX level reading")
+            logger.debug("No water bbox from YOLOX — skipping PSPNet")
             return yolo_result.water, None
 
-        crop = self._crop_from_bbox(frame, bbox)
-        if crop is None:
-            return yolo_result.water, bbox
-
         try:
-            pct, status, mask = self.estimator.estimate_water(crop)
+            # PSPNet was trained on full 640x640 frames — pass full frame
+            pct, status, mask = self.estimator.estimate_water(frame)
             logger.debug("Water PSPNet: %.1f%% [%s]", pct, status)
             return LevelReading(pct=pct, status=status), bbox
         except Exception as e:
@@ -188,7 +182,6 @@ class YOLOPSPPipeline:
             if self.fallback:
                 return yolo_result.water, bbox
             return LevelReading(pct=0.0, status="CRITICAL"), bbox
-
     def _estimate_food(
         self,
         frame: np.ndarray,
@@ -217,39 +210,28 @@ class YOLOPSPPipeline:
                 return yolo_result.food, bbox
             return LevelReading(pct=0.0, status="CRITICAL"), bbox
 
-    def _crop_from_bbox(
-        self,
-        frame: np.ndarray,
-        bbox: BoundingBox,
-        padding: float = 0.05,
-    ) -> Optional[np.ndarray]:
-        """
-        Extract crop from frame using bbox coordinates.
-        Adds small padding around bbox so PSPNet sees container context.
-        Returns None if crop is too small to be useful.
-        """
+    def _crop_from_bbox(self, frame: np.ndarray, bbox: BoundingBox) -> Optional[np.ndarray]:
         h, w = frame.shape[:2]
+        x1 = int(max(bbox.x1, 0))
+        y1 = int(max(bbox.y1, 0))
+        x2 = int(min(bbox.x2, w))
+        y2 = int(min(bbox.y2, h))
 
-        # Add padding
-        pad_x = int((bbox.x2 - bbox.x1) * padding)
-        pad_y = int((bbox.y2 - bbox.y1) * padding)
+        # Shrink the crop to the inner 60% of the bbox
+        # This removes cage wires and background at the edges
+        bw = x2 - x1
+        bh = y2 - y1
+        margin_x = int(bw * 0.20)
+        margin_y = int(bh * 0.15)
+        x1 = x1 + margin_x
+        y1 = y1 + margin_y
+        x2 = x2 - margin_x
+        y2 = y2 - margin_y
 
-        x1 = max(0, int(bbox.x1) - pad_x)
-        y1 = max(0, int(bbox.y1) - pad_y)
-        x2 = min(w, int(bbox.x2) + pad_x)
-        y2 = min(h, int(bbox.y2) + pad_y)
-
-        crop_w = x2 - x1
-        crop_h = y2 - y1
-
-        if crop_w < self.MIN_CROP_SIZE or crop_h < self.MIN_CROP_SIZE:
-            logger.warning(
-                "Crop too small (%dx%d) — skipping PSPNet for this bbox",
-                crop_w, crop_h
-            )
+        if x2 <= x1 or y2 <= y1:
             return None
 
-        return frame[y1:y2, x1:x2].copy()
+        return frame[y1:y2, x1:x2]
 
     # ── Flagging ──────────────────────────────────────────────────────────
 

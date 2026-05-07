@@ -176,23 +176,42 @@ def _best_level_reading_yolox(boxes, scores, classes, class_ids):
     best_cls = None
     best_box = None
 
+    img_size = 640.0
+
+    # Determine type by checking which set this is
+    is_water = bool(class_ids & WATER_CLASS_IDS)
+    is_food  = bool(class_ids & FOOD_CLASS_IDS)
+
     for box, score, cls in zip(boxes, scores, classes):
-        if int(cls) in class_ids and float(score) > best_conf:
+        if int(cls) not in class_ids:
+            continue
+
+        x1, y1, x2, y2 = box
+        bw   = (x2 - x1) / img_size
+        bh   = (y2 - y1) / img_size
+        area = bw * bh
+        cx   = (x1 + x2) / 2 / img_size
+        cy   = (y1 + y2) / 2 / img_size
+
+        print(f"  cls={cls} score={score:.3f} cx={cx:.3f} cy={cy:.3f} area={area:.3f} is_water={is_water}")
+
+        # Food must not be in top 30% of frame
+        if is_food and cy < 0.30:
+            print(f"  → REJECTED food too high cy={cy:.3f}")
+            continue
+
+        if float(score) > best_conf:
             best_conf = float(score)
-            best_cls = int(cls)
-            best_box = box
+            best_cls  = int(cls)
+            best_box  = box
 
     if best_cls is None:
         return LevelReading.unknown(), None
 
     reading = LevelReading.from_class_id(best_cls)
-
     bbox = BoundingBox(
-        x1=float(best_box[0]),
-        y1=float(best_box[1]),
-        x2=float(best_box[2]),
-        y2=float(best_box[3]),
+        x1=float(best_box[0]), y1=float(best_box[1]),
+        x2=float(best_box[2]), y2=float(best_box[3]),
         conf=best_conf,
     )
-
     return reading, bbox

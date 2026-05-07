@@ -5,11 +5,8 @@ def main():
 # Load model
     from ultralytics import YOLO
 
-    model = YOLO(r"E:\AI\vivarium-project\vivarium-cv\runs\detect\vivarium_v1\weights\best.pt")
-
-
-    # Load image
-    img_path = r"dataset\original\img_11.jpg"
+    model = YOLO(r"runs\detect\vivarium_v1\weights\best.pt")
+    img_path = r"dataset\original\image_9.jpg"
     img = cv2.imread(img_path)
 
     if img is None:
