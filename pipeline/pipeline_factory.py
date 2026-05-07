@@ -1,15 +1,17 @@
-# pipeline/pipeline_factory.py
+# pipeline/pipeline_factory.py  (UPDATED — replaces existing file)
 """
 Factory for runtime backend selection + orchestrator access.
 
-Usage:
-    # Inference backend (existing behaviour)
-    from pipeline.pipeline_factory import get_pipeline
-    pipeline = get_pipeline()
+Now supports three pipeline modes:
+    BACKEND=yolo      → pure YOLOX (original, 4-bucket level classification)
+    BACKEND=yolo_psp  → YOLOX detection + PSPNet level estimation (NEW — continuous %)
+    BACKEND=ssd       → SSD MobileNet (existing)
 
-    # Full orchestrator (data prep, training, validation, inference)
-    from pipeline.pipeline_factory import get_orchestrator
-    orch = get_orchestrator()
+Set in .env:
+    BACKEND=yolo_psp
+    PSP_WATER_WEIGHTS=models/psp/water_best.pth
+    PSP_FOOD_WEIGHTS=models/psp/food_best.pth
+    PSP_BACKBONE=resnet50
 """
 
 from __future__ import annotations
@@ -20,18 +22,32 @@ from typing import Optional
 from pipeline.orchestrator import VivariumOrchestrator, OrchestratorConfig
 
 
-# ── Inference pipeline (unchanged API) ───────────────────────────────────────
+# ── Inference pipeline ────────────────────────────────────────────────────────
 
 def get_pipeline(cage_type: str = "default"):
     """
-    Return the inference pipeline for the active backend (BACKEND env var).
-    Backend: 'yolo' (default) | 'ssd'
+    Return the inference pipeline for the active backend.
+
+    Backends:
+        yolo     : pure YOLOX, 4-bucket level classification (original)
+        yolo_psp : YOLOX bbox detection + PSPNet continuous level estimation (NEW)
+        ssd      : SSD MobileNet (existing)
     """
     backend = os.getenv("BACKEND", "yolo").lower()
 
     if backend == "yolo":
         from pipeline.yolo_pipeline import YOLOPipeline
         return YOLOPipeline(cage_type=cage_type)
+
+    elif backend == "yolo_psp":
+        from pipeline.yolo_psp_pipeline import YOLOPSPPipeline
+        return YOLOPSPPipeline(
+            cage_type=cage_type,
+            water_psp_weights=os.getenv("PSP_WATER_WEIGHTS"),
+            food_psp_weights=os.getenv("PSP_FOOD_WEIGHTS"),
+            psp_backbone=os.getenv("PSP_BACKBONE", "resnet50"),
+            fallback_to_yolox=True,
+        )
 
     elif backend == "ssd":
         from pipeline.ssd_pipeline import SSDPipeline
@@ -40,31 +56,15 @@ def get_pipeline(cage_type: str = "default"):
     else:
         raise ValueError(
             f"Unknown backend: '{backend}'. "
-            "Set BACKEND=yolo or BACKEND=ssd in your .env file."
+            "Set BACKEND=yolo, BACKEND=yolo_psp, or BACKEND=ssd in your .env file."
         )
 
 
-# ── Orchestrator (data prep + training + inference) ───────────────────────────
+# ── Orchestrator ──────────────────────────────────────────────────────────────
 
 def get_orchestrator(config: Optional[OrchestratorConfig] = None) -> VivariumOrchestrator:
     """
-    Return a VivariumOrchestrator — the single entry-point for all workflows.
-
-    Args:
-        config: Optional OrchestratorConfig to override defaults.
-
-    Example:
-        from pipeline.pipeline_factory import get_orchestrator
-
-        orch = get_orchestrator()
-
-        # Data pipeline
-        orch.run_data_pipeline(n_augments=50)
-
-        # Training
-        orch.train(epochs=100)
-
-        # Single frame inference
-        result = orch.infer(frame=bgr_frame, cage_id="cage_01")
+    Return a VivariumOrchestrator — single entry-point for all workflows.
+    PSPNet training is also accessible through the orchestrator.
     """
     return VivariumOrchestrator(config=config)
