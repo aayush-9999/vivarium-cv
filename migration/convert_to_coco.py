@@ -79,7 +79,7 @@ YOLO_CLASS_NAMES = [
 
 # COCO categories: id is 1-indexed (YOLO class_id + 1)
 COCO_CATEGORIES = [
-    {"id": i + 1, "name": name, "supercategory": "vivarium"}
+    {"id": i, "name": name, "supercategory": "vivarium"}
     for i, name in enumerate(YOLO_CLASS_NAMES)
 ]
 
@@ -212,7 +212,7 @@ def convert_split(
             annotations_list.append({
                 "id":          ann_id,
                 "image_id":    img_id,
-                "category_id": cls_id + 1,   # COCO is 1-indexed
+                "category_id": cls_id,   # COCO is 1-indexed
                 "bbox":        [x, y, w, h],
                 "area":        round(w * h, 2),
                 "iscrowd":     0,
@@ -294,7 +294,7 @@ def verify_coco_json(json_path: Path) -> list[str]:
             issues.append(f"Ann {ann['id']}: negative bbox origin {ann['bbox']}")
 
     # Check category IDs are exactly 1..9
-    expected_ids = set(range(1, 10))
+    expected_ids = set(range(0, 9))
     if cat_ids != expected_ids:
         issues.append(f"Category IDs mismatch: got {sorted(cat_ids)}, expected {sorted(expected_ids)}")
 

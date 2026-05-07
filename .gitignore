@@ -10,3 +10,13 @@ output.jpg
 flagged_frames
 YOLOX_outputs
 *.pth
+*.pt
+last_epoch_ckpt.pth
+latest_ckpt.pth
+last_mosaic_epoch_ckpt.pth
+latest_mosaic_epoch_ckpt.pth
+YOLOX_outputs\vivarium_yolox_tiny
+YOLOX_outputs/vivarium_yolox_tiny/last_epoch_ckpt.pth
+YOLOX_outputs/vivarium_yolox_tiny/last_epoch_ckpt.pth
+YOLOX_outputs/vivarium_yolox_tiny/train_log.txt
+YOLOX_outputs/vivarium_yolox_tiny/last_mosaic_epoch_ckpt.pth

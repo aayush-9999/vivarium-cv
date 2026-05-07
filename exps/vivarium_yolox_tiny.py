@@ -21,7 +21,7 @@ class Exp(MyExp):
         self.data_dir         = "E:\\AI\\vivarium-project\\vivarium-cv\\dataset\\coco"
         self.train_ann        = "train.json"
         self.val_ann          = "val.json"
-        self.eval_interval    = 55
+        self.eval_interval    = 5
         self.test_conf        = 0.35
         self.nmsthre          = 0.45
 
@@ -54,12 +54,9 @@ class Exp(MyExp):
         )
     def get_evaluator(self, batch_size, is_distributed, testdev=False, legacy=False):
         from yolox.evaluators import COCOEvaluator
-
-        # Fix: replace fast C++ COCO eval with standard pycocotools
-        # (fast eval requires Visual Studio cl.exe which is not available)
-        import yolox.layers.fast_coco_eval_api as fast_api
-        from pycocotools.cocoeval import COCOeval
-        fast_api.COCOeval_opt = COCOeval
+        from pycocotools.cocoeval import COCOeval as _COCOeval
+        import yolox.layers.fast_coco_eval_api as _fast_api
+        _fast_api.COCOeval_opt = _COCOeval
 
         return COCOEvaluator(
             dataloader  = self.get_eval_loader(

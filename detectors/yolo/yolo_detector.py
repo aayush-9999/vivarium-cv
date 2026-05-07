@@ -74,10 +74,6 @@ class YOLODetector(BaseDetector):
             raise InferenceError(f"YOLOx inference failed for cage '{cage_id}': {e}") from e
 
         result = self._postprocess((outputs, ratio), cage_id, t_start)
-
-        if(cv2.imwrite("output.jpg", frame)):   # 👈 YOUR ONE LINE
-            pass
-        else:            print("Failed to save output.jpg")
         return result
 
 
