@@ -66,7 +66,7 @@ FOOD_CLASS_BOUNDARIES = [
 ]
 
 # ── Detection thresholds ──────────────────────────────────────────────────────
-YOLO_CONF_THRESHOLD: float = 0.25
+YOLO_CONF_THRESHOLD: float = float(os.getenv("YOLO_CONF_THRESHOLD", "0.50"))
 YOLO_IOU_THRESHOLD:  float = 0.45
 
 # ── ROI zones (fallback only) ─────────────────────────────────────────────────
