@@ -75,7 +75,7 @@ except ImportError:
 # YOLOX experiment file + inference constants
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT       = Path(__file__).resolve().parent.parent
-_DEFAULT_EXP        = str(_PROJECT_ROOT / "exps" / "vivarium_yolox_tiny.py")
+_DEFAULT_EXP        = str(_PROJECT_ROOT / "exps" / "yolox_vivarium_tiny.py")
 
 YOLOX_EXP_FILE      = Path(os.getenv("YOLOX_EXP_FILE", _DEFAULT_EXP))
 YOLOX_INPUT_SIZE: tuple[int, int] = tuple(INPUT_SIZE)  # type: ignore[assignment]
