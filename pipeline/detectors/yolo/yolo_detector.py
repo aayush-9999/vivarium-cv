@@ -1,58 +1,83 @@
-# detectors/yolo/yolo_detector.py
+# pipeline/detectors/yolo/yolo_detector.py
+"""
+YOLOXDetector — wraps the YOLOX model for vivarium cage inference.
+
+All configuration (weights path, exp file, input size, conf/NMS thresholds)
+is pulled from core.config_loader.CONFIG so there is no scattered
+os.getenv() usage here.
+"""
+
 from __future__ import annotations
+
 import time
-from unittest import result
+
+import cv2
 import numpy as np
 import torch
-import cv2
 
-from pipeline.detectors.base import BaseDetector
-from core.schemas import DetectionResult
-from core.config_loader import CONFIG
+from core.config_loader import (
+    CONFIG,
+    YOLOX_EXP_FILE,
+    YOLOX_INPUT_SIZE,
+    YOLO_CONF_THRESHOLD,
+    YOLO_IOU_THRESHOLD,
+)
 from core.exceptions import DetectorInitError, InferenceError
+from core.schemas import DetectionResult
+from pipeline.detectors.base import BaseDetector
 from pipeline.detectors.yolo.postprocessor import parse_yolox_results
 
 
 class YOLODetector(BaseDetector):
+    """
+    Loads a YOLOX model from a checkpoint and exposes a detect() method
+    that returns a fully populated DetectionResult.
+    """
 
-    def __init__(self, weights_path: str, device: str = "cpu"):
+    def __init__(self, weights_path: str, device: str = "cpu") -> None:
+        # BaseDetector.__init__ calls _load_model()
         super().__init__(weights_path=weights_path, device=device)
+
+    # ------------------------------------------------------------------
+    # BaseDetector implementation
+    # ------------------------------------------------------------------
 
     def _load_model(self) -> None:
         try:
             from yolox.exp import get_exp
-            from yolox.utils import get_model_info, postprocess
             from yolox.data.data_augment import ValTransform
 
-            exp = get_exp(str(YOLOX_EXP_FILE), exp_name=None)
-            exp.num_classes = 9
+            exp              = get_exp(str(YOLOX_EXP_FILE), exp_name=None)
+            exp.num_classes  = CONFIG["yolox"]["num_classes"]
 
             self.model = exp.get_model()
             self.model.eval()
 
-            # Load checkpoint — YOLOx uses {"model": state_dict} format
-            ckpt = torch.load(self.weights_path, map_location="cpu", weights_only=False)
-            print("🔥 ACTUAL WEIGHTS LOADED:", self.weights_path)
+            ckpt = torch.load(
+                self.weights_path, map_location="cpu", weights_only=False
+            )
             self.model.load_state_dict(ckpt.get("model", ckpt))
             self.model.to(self.device)
 
-            # YOLOx uses its own preprocessing transform
-            self._preproc = ValTransform(legacy=False)
-            self._input_size = YOLOX_INPUT_SIZE  # (h, w)
+            self._preproc    = ValTransform(legacy=False)
+            self._input_size = YOLOX_INPUT_SIZE   # (H, W)
 
-        except FileNotFoundError as e:
-            raise DetectorInitError(f"YOLOx weights not found: {self.weights_path}") from e
-        except Exception as e:
-            raise DetectorInitError(f"Failed to load YOLOx model: {e}") from e
+        except FileNotFoundError as exc:
+            raise DetectorInitError(
+                f"YOLOX weights not found: {self.weights_path}"
+            ) from exc
+        except Exception as exc:
+            raise DetectorInitError(
+                f"Failed to load YOLOX model: {exc}"
+            ) from exc
 
     def detect(self, frame: np.ndarray, cage_id: str) -> DetectionResult:
         if not self.is_ready():
-            raise InferenceError("Model not loaded.")
+            raise InferenceError("Model not loaded — call _load_model() first.")
 
         t_start = time.perf_counter_ns()
 
         try:
-            # YOLOx preprocessing: outputs (img, ratio) not just img
             img, ratio = self._preproc(frame, None, self._input_size)
             img_tensor = torch.from_numpy(img).unsqueeze(0).float()
             if self.device != "cpu":
@@ -61,29 +86,33 @@ class YOLODetector(BaseDetector):
             with torch.no_grad():
                 raw_output = self.model(img_tensor)
 
-            # YOLOx postprocess applies NMS internally
             from yolox.utils import postprocess
             outputs = postprocess(
                 raw_output,
-                num_classes=9,
-                conf_thre=YOLO_CONF_THRESHOLD,
-                nms_thre=YOLO_IOU_THRESHOLD,
+                num_classes = CONFIG["yolox"]["num_classes"],
+                conf_thre   = YOLO_CONF_THRESHOLD,
+                nms_thre    = YOLO_IOU_THRESHOLD,
             )
 
-        except Exception as e:
-            raise InferenceError(f"YOLOx inference failed for cage '{cage_id}': {e}") from e
+        except Exception as exc:
+            raise InferenceError(
+                f"YOLOX inference failed for cage '{cage_id}': {exc}"
+            ) from exc
 
-        result = self._postprocess((outputs, ratio), cage_id, t_start)
-        return result
+        return self._postprocess((outputs, ratio), cage_id, t_start)
 
-
-    def _postprocess(self, raw_output, cage_id: str, inference_start_ns: int = 0) -> DetectionResult:
+    def _postprocess(
+        self,
+        raw_output,
+        cage_id: str,
+        inference_start_ns: int = 0,
+    ) -> DetectionResult:
         outputs, ratio = raw_output
         return parse_yolox_results(
-            outputs=outputs,
-            ratio=ratio,
-            cage_id=cage_id,
-            inference_start_ns=inference_start_ns,
+            outputs             = outputs,
+            ratio               = ratio,
+            cage_id             = cage_id,
+            inference_start_ns  = inference_start_ns,
         )
 
     def warmup(self) -> None:

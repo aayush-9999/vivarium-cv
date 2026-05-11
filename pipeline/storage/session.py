@@ -1,7 +1,7 @@
 # db/session.py
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from db.models import Base
+from pipeline.storage.models import Base
 from dotenv import load_dotenv
 load_dotenv()
 
