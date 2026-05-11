@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
-
-from core.config import YOLO_CLASS_MAP, CLASS_TO_LEVEL
+from core.config_loader import CONFIG
 from core.schemas import DetectionResult, LevelReading, BoundingBox
 from core.exceptions import InferenceError
 
@@ -193,7 +192,10 @@ def _best_level_reading_yolox(boxes, scores, classes, class_ids):
         cx   = (x1 + x2) / 2 / img_size
         cy   = (y1 + y2) / 2 / img_size
 
-        print(f"  cls={cls} score={score:.3f} cx={cx:.3f} cy={cy:.3f} area={area:.3f} is_water={is_water}")
+        import logging
+        logger = logging.getLogger("vivarium.postprocessor")
+        logger.debug("cls=%d score=%.3f cx=%.3f cy=%.3f area=%.3f", cls, score, cx, cy, area)
+        logger.debug("REJECTED food too high cy=%.3f", cy)
 
         # Food must not be in top 30% of frame
         if is_food and cy < 0.30:

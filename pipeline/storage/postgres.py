@@ -6,8 +6,7 @@ from typing import Optional
 
 from sqlalchemy import select, desc, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from db.models import CageReading, Alert
+from pipeline.storage.models import CageReading, Alert
 from core.schemas import DetectionResult
 
 

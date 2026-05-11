@@ -1,7 +1,7 @@
 # preprocessing/background_subtractor.py
 import numpy as np
 import cv2
-from core.config import MOTION_PIXEL_THRESHOLD
+from core.config_loader import CONFIG
 
 class BackgroundSubtractor:
     """
