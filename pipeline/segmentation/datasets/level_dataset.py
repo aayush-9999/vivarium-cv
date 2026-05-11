@@ -88,7 +88,7 @@ class SegmentationAugment:
         self,
         image: np.ndarray,
         mask:  np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray   ]:
 
         # ── Horizontal flip ────────────────────────────────────────────────
         if random.random() < self.flip_prob:

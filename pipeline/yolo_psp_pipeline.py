@@ -22,10 +22,10 @@ from datetime import datetime, timezone
 
 from core.schemas import DetectionResult, LevelReading, BoundingBox
 from core.exceptions import VivariumCVError
-from preprocessing.frame_preprocessor import FramePreprocessor
-from preprocessing.background_subtractor import BackgroundSubtractor
-from detectors.yolo.yolo_detector import YOLODetector
-from segmentation.models.level_estimator import (
+from pipeline.preprocessing.frame_preprocessor import FramePreprocessor
+from pipeline.preprocessing.background_subtractor import BackgroundSubtractor
+from pipeline.detectors.yolo.yolo_detector import YOLODetector
+from pipeline.segmentation.models.level_estimator import (
     LevelEstimator, pct_to_status, NO_CONTAINER_SENTINEL
 )
 
@@ -165,12 +165,19 @@ class YOLOPSPPipeline:
         """
         try:
             pct, status, _ = self.estimator.estimate_water(frame)
-
-            # Sentinel means PSPNet found no container pixels at all
             if pct == NO_CONTAINER_SENTINEL:
                 logger.warning(
                     "Water PSPNet: no container detected in frame — "
                     "falling back to YOLOX reading"
+                )
+                return yolo_result.water
+
+            # Saturated reading — PSPNet uncertain, trust YOLOX if it disagrees
+            if pct >= 97.0 and yolo_result.water.status != "OK":
+                logger.warning(
+                    "Water PSPNet returned saturated 97%% but YOLOX says %s "
+                    "— falling back to YOLOX reading.",
+                    yolo_result.water.status,
                 )
                 return yolo_result.water
 
@@ -183,37 +190,72 @@ class YOLOPSPPipeline:
                 return yolo_result.water
             return LevelReading(pct=0.0, status="CRITICAL")
 
+    # Tune these to your cage: (x1_frac, y1_frac, x2_frac, y2_frac) of 640x640 frame
+    _FOOD_ROI_FALLBACK = (0.40, 0.55, 0.70, 0.90)
+    _MIN_CROP_PX = 20
+
     def _run_food_psp(
         self,
         frame:       np.ndarray,
         yolo_result: DetectionResult,
     ) -> LevelReading:
-        """
-        Run PSPNet food model on the FULL frame.
-        Falls back to YOLOX if sentinel returned (no container detected)
-        or if PSPNet throws an exception.
-        """
         try:
-                        # Food uses crop — hopper is small relative to full frame
+            crop = None
             bbox = yolo_result.food_bbox
+
+            # Step 1: try YOLOX bbox crop
             if bbox is not None:
                 h, w = frame.shape[:2]
-                x1 = max(0, int(bbox.x1))
-                y1 = max(0, int(bbox.y1))
-                x2 = min(w, int(bbox.x2))
-                y2 = min(h, int(bbox.y2))
-                crop = frame[y1:y2, x1:x2]
-                if crop.size == 0:
-                    return yolo_result.food
-                pct, status, _ = self.estimator.estimate_food(crop)
-            else:
-                pct, status, _ = self.estimator.estimate_food(frame)
+                x1 = max(0, int(bbox.x1)); y1 = max(0, int(bbox.y1))
+                x2 = min(w, int(bbox.x2)); y2 = min(h, int(bbox.y2))
+                candidate = frame[y1:y2, x1:x2]
+                if candidate.size > 0 and (x2 - x1) >= self._MIN_CROP_PX and (y2 - y1) >= self._MIN_CROP_PX:
+                    crop = candidate
+                else:
+                    logger.debug("Food bbox crop degenerate — trying fixed ROI fallback")
 
-            # Sentinel means PSPNet found no container pixels at all
+            # Step 2: fixed ROI fallback when YOLOX missed the hopper
+            if crop is None:
+                h, w = frame.shape[:2]
+                x1f, y1f, x2f, y2f = self._FOOD_ROI_FALLBACK
+                rx1, ry1 = int(x1f * w), int(y1f * h)
+                rx2, ry2 = int(x2f * w), int(y2f * h)
+                candidate = frame[ry1:ry2, rx1:rx2]
+                if candidate.size > 0 and (rx2 - rx1) >= self._MIN_CROP_PX and (ry2 - ry1) >= self._MIN_CROP_PX:
+                    logger.info(
+                        "Food bbox missing — using fixed ROI fallback (%d,%d,%d,%d)",
+                        rx1, ry1, rx2, ry2,
+                    )
+                    crop = candidate
+                else:
+                    logger.warning("Fixed ROI fallback also degenerate — using YOLOX reading")
+                    return yolo_result.food
+
+            pct, status, _ = self.estimator.estimate_food(crop)
+
+            # Sentinel: PSPNet found no container pixels at all
             if pct == NO_CONTAINER_SENTINEL:
                 logger.warning(
-                    "Food PSPNet: no container detected in frame — "
-                    "falling back to YOLOX reading"
+                    "Food PSPNet: no container detected — falling back to YOLOX reading"
+                )
+                return yolo_result.food
+
+            # Sanity gate: PSPNet says >40% full but YOLOX says CRITICAL
+            # → bedding/background confusion, trust YOLOX
+            if pct > 40.0 and yolo_result.food.status == "CRITICAL":
+                logger.warning(
+                    "Food PSPNet returned %.1f%% [%s] but YOLOX says CRITICAL "
+                    "— falling back to YOLOX (bedding confusion).",
+                    pct, status,
+                )
+                return yolo_result.food
+
+            # Saturated reading — uncertain, fall back to YOLOX if it disagrees
+            if pct >= 97.0 and yolo_result.food.status != "OK":
+                logger.warning(
+                    "Food PSPNet returned saturated 97%% but YOLOX says %s "
+                    "— falling back to YOLOX reading.",
+                    yolo_result.food.status,
                 )
                 return yolo_result.food
 
