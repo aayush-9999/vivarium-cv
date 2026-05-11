@@ -4,7 +4,7 @@ import numpy as np
 from core.base_preprocessor import BasePreprocessor
 from core.config import INPUT_SIZE
 from core.exceptions import VivariumCVError
-from preprocessing.roi_manager import ROIManager
+from pipeline.preprocessing.roi_manager import ROIManager
 
 class FramePreprocessor(BasePreprocessor):
     """

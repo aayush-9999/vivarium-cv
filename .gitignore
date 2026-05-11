@@ -1,22 +1,39 @@
-venv310
-venv
-runs
-.env
-dataset
-yolo26n.pt
-yolov8n.pt
-output.jpg
-*.pyc
-flagged_frames
-YOLOX_outputs
+# ── Large data / model files ──────────────────────────────────────────────────
+dataset/
+models/
+runs/
+archive/
+
+# ── Training artifacts ────────────────────────────────────────────────────────
+YOLOX_outputs/
+*.tfevents.*
 *.pth
 *.pt
-last_epoch_ckpt.pth
-latest_ckpt.pth
-last_mosaic_epoch_ckpt.pth
-latest_mosaic_epoch_ckpt.pth
-YOLOX_outputs\vivarium_yolox_tiny
-YOLOX_outputs/vivarium_yolox_tiny/last_epoch_ckpt.pth
-YOLOX_outputs/vivarium_yolox_tiny/last_epoch_ckpt.pth
-YOLOX_outputs/vivarium_yolox_tiny/train_log.txt
-YOLOX_outputs/vivarium_yolox_tiny/last_mosaic_epoch_ckpt.pth
+*.onnx
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+venv310/
+*.egg-info/
+dist/
+build/
+
+# ── Environment ───────────────────────────────────────────────────────────────
+.env
+!.env.example
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.code-workspace
+
+# ── Flagged frames (runtime output) ──────────────────────────────────────────
+flagged_frames/

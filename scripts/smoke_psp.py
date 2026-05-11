@@ -85,7 +85,7 @@ def test_crop_only(
     out_dir:    str = "runs/psp_test",
 ) -> None:
     """Test PSPNet alone on a pre-cropped container image."""
-    from segmentation.models.level_estimator import (
+    from pipeline.segmentation.models.level_estimator import (
         LevelEstimator, overlay_mask, WATER_PALETTE, FOOD_PALETTE
     )
 
