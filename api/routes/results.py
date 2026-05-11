@@ -28,7 +28,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from pipeline.storage import postgres as crud
 from pipeline.storage.postgres import get_db       
 from pipeline.storage.postgres import save_detection
 

@@ -1,4 +1,26 @@
 # pipeline/orchestrator.py
+"""
+VivariumOrchestrator — single entry-point for all Vivarium CV workflows.
+
+The orchestrator owns two concerns:
+
+1. **Inference** — delegates to InferencePipeline (backend selected by config).
+2. **Data & training** — exposes every data-prep, labelling, augmentation,
+   training, and validation step as a method.
+
+API / camera code should use get_pipeline() directly.
+Notebooks and CLI scripts should use get_orchestrator().
+
+Backend selection
+─────────────────
+The active inference backend is taken from OrchestratorConfig.backend
+(default: CONFIG["backend"] from .env).  Changing it at construction time
+is enough — the orchestrator rebuilds the pipeline automatically.
+
+    orch = get_orchestrator(OrchestratorConfig(backend="yolo_psp"))
+    result = orch.infer(frame, "cage_01")
+"""
+
 from __future__ import annotations
 
 import os
@@ -10,40 +32,53 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from core.schemas import DetectionResult
+from core.config_loader import CONFIG
 from core.exceptions import VivariumCVError
+from core.schemas import DetectionResult
 
+
+# ---------------------------------------------------------------------------
+# OrchestratorConfig
+# ---------------------------------------------------------------------------
 
 @dataclass
 class OrchestratorConfig:
-    # Paths
+    """All tuneable parameters for data-prep and training workflows."""
+
+    # ── Backend ───────────────────────────────────────────────────────────
+    backend:      str   = field(default_factory=lambda: CONFIG["backend"])
+    cage_type:    str   = "default"
+
+    # ── Paths ─────────────────────────────────────────────────────────────
     orig_dir:     Path  = field(default_factory=lambda: Path("dataset/original"))
     aug_dir:      Path  = field(default_factory=lambda: Path("dataset/augmented"))
     split_dir:    Path  = field(default_factory=lambda: Path("dataset/split"))
-    weights:      Path  = field(default_factory=lambda: Path(os.getenv("YOLO_WEIGHTS", "models/yolo/best.pt")))
-    device:       str   = field(default_factory=lambda: os.getenv("YOLO_DEVICE", "cpu"))
+    weights:      Path  = field(
+        default_factory=lambda: Path(CONFIG["yolox"]["weights"])
+    )
+    device:       str   = field(default_factory=lambda: CONFIG["device"])
 
-    # Augmentation
+    # ── Augmentation ──────────────────────────────────────────────────────
     aug_n:        int   = 50
     aug_seed:     int   = field(default_factory=lambda: random.randint(0, 99_999))
     img_size:     int   = 640
     jpeg_quality: int   = 90
 
-    # GDINO labelling
+    # ── GDINO labelling ───────────────────────────────────────────────────
     mouse_thresh:     float = 0.22
     container_thresh: float = 0.30
     food_thresh:      float = 0.28
 
-    # Training
+    # ── Training ──────────────────────────────────────────────────────────
     epochs:       int   = 100
     batch:        int   = 16
     train_ratio:  float = 0.85
 
-    # Inference
+    # ── Inference ─────────────────────────────────────────────────────────
     conf: float = 0.35
     iou:  float = 0.45
 
-    # Label cleaning (passed to label_tools)
+    # ── Label cleaning ────────────────────────────────────────────────────
     max_food_area: float = 0.12
     max_food_w:    float = 0.40
     max_food_h:    float = 0.50
@@ -51,69 +86,153 @@ class OrchestratorConfig:
     food_nms_iou:  float = 0.50
 
 
+# ---------------------------------------------------------------------------
+# VivariumOrchestrator
+# ---------------------------------------------------------------------------
+
 class VivariumOrchestrator:
-    """Single entry-point for all Vivarium CV workflows."""
+    """
+    Single entry-point for all Vivarium CV workflows.
 
-    def __init__(self, config: Optional[OrchestratorConfig] = None):
+    Inference is delegated to InferencePipeline (pipeline/pipeline.py).
+    Data-prep and training methods call the relevant scripts directly.
+    """
+
+    def __init__(self, config: Optional[OrchestratorConfig] = None) -> None:
         self.cfg = config or OrchestratorConfig()
-        self._inference_pipeline = None
+        self._pipeline: Optional[object] = None   # lazy-loaded InferencePipeline
 
-    # ── Inference ─────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Backend management
+    # ------------------------------------------------------------------
 
-    def infer(self, frame: np.ndarray, cage_id: str, save_flagged: bool = False) -> DetectionResult:
-        return self._get_inference_pipeline().run(frame=frame, cage_id=cage_id, save_flagged=save_flagged)
+    def set_backend(self, backend: str) -> None:
+        """
+        Switch the inference backend at runtime.
 
-    def infer_from_path(self, image_path: str | Path, cage_id: str, save_flagged: bool = False) -> DetectionResult:
+        Valid values: "yolo", "yolo_psp", "ssd"
+        Rebuilds the pipeline on next infer() call.
+        """
+        valid = {"yolo", "yolo_psp", "ssd"}
+        if backend not in valid:
+            raise ValueError(f"Unknown backend '{backend}'. Choose from {valid}.")
+        self.cfg.backend = backend
+        self._pipeline   = None   # force rebuild
+
+    @property
+    def active_backend(self) -> str:
+        return self.cfg.backend
+
+    # ------------------------------------------------------------------
+    # Inference
+    # ------------------------------------------------------------------
+
+    def infer(
+        self,
+        frame: np.ndarray,
+        cage_id: str,
+        save_flagged: bool = False,
+    ) -> DetectionResult:
+        """Run inference on a BGR numpy frame."""
+        return self._get_pipeline().run(
+            frame=frame, cage_id=cage_id, save_flagged=save_flagged
+        )
+
+    def infer_from_path(
+        self,
+        image_path: str | Path,
+        cage_id: str,
+        save_flagged: bool = False,
+    ) -> DetectionResult:
+        """Load an image from disk and run inference."""
         img = cv2.imread(str(image_path))
         if img is None:
             raise VivariumCVError(f"Cannot read image: {image_path}")
         return self.infer(img, cage_id=cage_id, save_flagged=save_flagged)
 
     def debug_frame(self, frame: np.ndarray) -> np.ndarray:
-        return self._get_inference_pipeline().debug_frame(frame)
+        """Return a copy of the frame with all detections drawn."""
+        return self._get_pipeline().debug_frame(frame)
 
-    # ── Label tools — all from scripts/label_tools.py ────────────────────
+    # ------------------------------------------------------------------
+    # Motion / camera helpers
+    # ------------------------------------------------------------------
 
-    def verify_labels(self, img_dir: Optional[Path] = None, label_dir: Optional[Path] = None) -> list[str]:
+    def set_reference_frame(self, frame: np.ndarray) -> None:
+        self._get_pipeline().set_reference_frame(frame)
+
+    def has_motion(self, frame: np.ndarray) -> bool:
+        return self._get_pipeline().has_motion(frame)
+
+    # ------------------------------------------------------------------
+    # Label tools
+    # ------------------------------------------------------------------
+
+    def verify_labels(
+        self,
+        img_dir: Optional[Path] = None,
+        label_dir: Optional[Path] = None,
+    ) -> list[str]:
         from scripts.label_tools import verify
         return verify(
-            img_dir=img_dir     or (self.cfg.aug_dir / "images"),
-            label_dir=label_dir or (self.cfg.aug_dir / "labels"),
+            img_dir   = img_dir   or (self.cfg.aug_dir / "images"),
+            label_dir = label_dir or (self.cfg.aug_dir / "labels"),
         )
 
-    def clean_food_labels(self, label_dir: Optional[Path] = None, max_area: Optional[float] = None,
-                          max_w: Optional[float] = None, max_h: Optional[float] = None,
-                          dry_run: bool = False) -> dict:
+    def clean_food_labels(
+        self,
+        label_dir: Optional[Path] = None,
+        max_area: Optional[float] = None,
+        max_w: Optional[float] = None,
+        max_h: Optional[float] = None,
+        dry_run: bool = False,
+    ) -> dict:
         from scripts.label_tools import clean_food
         return clean_food(
-            label_dir=label_dir or (self.cfg.aug_dir / "labels"),
-            max_area=max_area   or self.cfg.max_food_area,
-            max_w=max_w         or self.cfg.max_food_w,
-            max_h=max_h         or self.cfg.max_food_h,
-            dry_run=dry_run,
+            label_dir = label_dir or (self.cfg.aug_dir / "labels"),
+            max_area  = max_area  or self.cfg.max_food_area,
+            max_w     = max_w     or self.cfg.max_food_w,
+            max_h     = max_h     or self.cfg.max_food_h,
+            dry_run   = dry_run,
         )
 
-    def dedup_labels(self, label_dir: Optional[Path] = None, mouse_iou: Optional[float] = None,
-                     food_iou: Optional[float] = None, dry_run: bool = False) -> dict:
+    def dedup_labels(
+        self,
+        label_dir: Optional[Path] = None,
+        mouse_iou: Optional[float] = None,
+        food_iou: Optional[float] = None,
+        dry_run: bool = False,
+    ) -> dict:
         from scripts.label_tools import dedup
         return dedup(
-            label_dir=label_dir or (self.cfg.aug_dir / "labels"),
-            mouse_iou=mouse_iou or self.cfg.mouse_nms_iou,
-            food_iou=food_iou   or self.cfg.food_nms_iou,
-            dry_run=dry_run,
+            label_dir = label_dir or (self.cfg.aug_dir / "labels"),
+            mouse_iou = mouse_iou or self.cfg.mouse_nms_iou,
+            food_iou  = food_iou  or self.cfg.food_nms_iou,
+            dry_run   = dry_run,
         )
 
-    def fix_labels(self, label_dir: Optional[Path] = None, dry_run: bool = False) -> dict:
+    def fix_labels(
+        self,
+        label_dir: Optional[Path] = None,
+        dry_run: bool = False,
+    ) -> dict:
         from scripts.label_tools import fix_classes
         return fix_classes(
-            label_dir=label_dir or (self.cfg.aug_dir / "labels"),
-            dry_run=dry_run,
+            label_dir = label_dir or (self.cfg.aug_dir / "labels"),
+            dry_run   = dry_run,
         )
 
-    # ── Labelling ─────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Auto-labelling
+    # ------------------------------------------------------------------
 
-    def label_originals(self, propagate: bool = False, mouse_thresh: Optional[float] = None,
-                        container_thresh: Optional[float] = None, food_thresh: Optional[float] = None) -> dict:
+    def label_originals(
+        self,
+        propagate: bool = False,
+        mouse_thresh: Optional[float] = None,
+        container_thresh: Optional[float] = None,
+        food_thresh: Optional[float] = None,
+    ) -> dict:
         from scripts.gdino_label_originals import load_model, label_originals as _label, propagate_labels
         thresholds = {
             0: mouse_thresh     or self.cfg.mouse_thresh,
@@ -126,49 +245,45 @@ class VivariumOrchestrator:
             propagate_labels(stem_to_boxes)
         return stem_to_boxes
 
-    def auto_label(self, src: Optional[Path] = None, dst: Optional[Path] = None,
-                   conf_override: Optional[float] = None, debug: bool = False) -> None:
-        from scripts.auto_label import main as _auto_label
-        _auto_label(
-            src=src or (self.cfg.aug_dir / "images"),
-            dst=dst or (self.cfg.aug_dir / "labels"),
-            conf_override=conf_override,
-            debug=debug,
-        )
+    # ------------------------------------------------------------------
+    # Augmentation
+    # ------------------------------------------------------------------
 
-    def merge_labels(self, existing_dir: Optional[Path] = None, new_dir: Optional[Path] = None,
-                     out_dir: Optional[Path] = None, dry_run: bool = False) -> None:
-        from scripts.merge_labels import main as _merge
-        _merge(
-            existing_dir=existing_dir or (self.cfg.aug_dir / "labels"),
-            new_dir=new_dir           or (self.cfg.aug_dir / "labels_gdino"),
-            out_dir=out_dir           or (self.cfg.aug_dir / "labels_merged"),
-            dry_run=dry_run,
-        )
-
-    # ── Augmentation ──────────────────────────────────────────────────────
-
-    def augment(self, n: Optional[int] = None, seed: Optional[int] = None,
-                src: Optional[Path] = None, dst: Optional[Path] = None,
-                src_labels: Optional[Path] = None, img_size: Optional[int] = None,
-                jpeg_quality: Optional[int] = None) -> None:
+    def augment(
+        self,
+        n: Optional[int] = None,
+        seed: Optional[int] = None,
+        src: Optional[Path] = None,
+        dst: Optional[Path] = None,
+        src_labels: Optional[Path] = None,
+        img_size: Optional[int] = None,
+        jpeg_quality: Optional[int] = None,
+    ) -> None:
         from scripts.augment import main as _augment
         _augment(
-            src=src          or self.cfg.orig_dir,
-            dst=dst          or self.cfg.aug_dir,
-            src_labels=src_labels,
-            n=n              or self.cfg.aug_n,
-            seed=seed        or self.cfg.aug_seed,
-            img_size=img_size or self.cfg.img_size,
-            quality=jpeg_quality or self.cfg.jpeg_quality,
+            src         = src          or self.cfg.orig_dir,
+            dst         = dst          or self.cfg.aug_dir,
+            src_labels  = src_labels,
+            n           = n            or self.cfg.aug_n,
+            seed        = seed         or self.cfg.aug_seed,
+            img_size    = img_size     or self.cfg.img_size,
+            quality     = jpeg_quality or self.cfg.jpeg_quality,
         )
 
-    # ── Dataset split ─────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Dataset split
+    # ------------------------------------------------------------------
 
-    def split_dataset(self, train_ratio: Optional[float] = None, seed: int = 42,
-                      label_dir: Optional[Path] = None, img_dir: Optional[Path] = None,
-                      out_dir: Optional[Path] = None) -> dict[str, int]:
+    def split_dataset(
+        self,
+        train_ratio: Optional[float] = None,
+        seed: int = 42,
+        label_dir: Optional[Path] = None,
+        img_dir: Optional[Path] = None,
+        out_dir: Optional[Path] = None,
+    ) -> dict[str, int]:
         import shutil
+
         ratio    = train_ratio or self.cfg.train_ratio
         lbl_dir  = label_dir  or (self.cfg.aug_dir / "labels")
         src_imgs = img_dir    or (self.cfg.aug_dir / "images")
@@ -177,8 +292,9 @@ class VivariumOrchestrator:
         random.seed(seed)
         labelled = [p for p in lbl_dir.glob("*.txt") if p.stat().st_size > 0]
         random.shuffle(labelled)
-        split_idx = int(len(labelled) * ratio)
-        train_set, val_set = labelled[:split_idx], labelled[split_idx:]
+        split_idx  = int(len(labelled) * ratio)
+        train_set  = labelled[:split_idx]
+        val_set    = labelled[split_idx:]
 
         for split_name, split_files in [("train", train_set), ("val", val_set)]:
             (dst / split_name / "images").mkdir(parents=True, exist_ok=True)
@@ -193,16 +309,25 @@ class VivariumOrchestrator:
         print(f"Split → train={counts['train']}  val={counts['val']}  output: {dst}")
         return counts
 
-    # ── Training ──────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Training
+    # ------------------------------------------------------------------
 
-    def train(self, yaml_path: Optional[Path] = None, epochs: Optional[int] = None,
-              batch: Optional[int] = None, device: Optional[str] = None,
-              project: Optional[Path] = None, run_name: str = "vivarium_v1",
-              resume: bool = False) -> Path:
+    def train(
+        self,
+        yaml_path: Optional[Path] = None,
+        epochs: Optional[int] = None,
+        batch: Optional[int] = None,
+        device: Optional[str] = None,
+        project: Optional[Path] = None,
+        run_name: str = "vivarium_v1",
+        resume: bool = False,
+    ) -> Path:
+        """Train the YOLOX detector.  Returns path to best.pt."""
         try:
             from ultralytics import YOLO
         except ImportError:
-            raise VivariumCVError("ultralytics not installed.")
+            raise VivariumCVError("ultralytics not installed — cannot train YOLOv8.")
 
         base_dir  = Path(__file__).resolve().parent.parent
         data_path = yaml_path or (base_dir / "dataset" / "vivarium.yaml")
@@ -210,40 +335,59 @@ class VivariumOrchestrator:
 
         model = YOLO("yolov8n.pt")
         model.train(
-            data=str(data_path),
-            epochs=epochs or self.cfg.epochs,
-            imgsz=self.cfg.img_size,
-            batch=batch   or self.cfg.batch,
-            device=device or self.cfg.device,
-            workers=0, cos_lr=True, patience=20,
-            hsv_h=0.015, hsv_s=0.4, hsv_v=0.3,
-            fliplr=0.5, mosaic=0.8,
-            project=str(proj), name=run_name,
-            exist_ok=True, resume=resume, verbose=True,
+            data      = str(data_path),
+            epochs    = epochs or self.cfg.epochs,
+            imgsz     = self.cfg.img_size,
+            batch     = batch  or self.cfg.batch,
+            device    = device or self.cfg.device,
+            workers   = 0,
+            cos_lr    = True,
+            patience  = 20,
+            hsv_h     = 0.015, hsv_s=0.4, hsv_v=0.3,
+            fliplr    = 0.5,
+            mosaic    = 0.8,
+            project   = str(proj),
+            name      = run_name,
+            exist_ok  = True,
+            resume    = resume,
+            verbose   = True,
         )
         best_pt = proj / run_name / "weights" / "best.pt"
         print(f"\nTraining complete. Weights: {best_pt}")
         return best_pt
 
-    # ── Validation ────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
 
-    def validate(self, weights: Optional[Path] = None, val_dir: Optional[Path] = None,
-                 out_dir: Optional[Path] = None, conf: Optional[float] = None,
-                 iou: Optional[float] = None) -> Path:
+    def validate(
+        self,
+        weights: Optional[Path] = None,
+        val_dir: Optional[Path] = None,
+        out_dir: Optional[Path] = None,
+        conf: Optional[float] = None,
+        iou: Optional[float] = None,
+    ) -> Path:
         from scripts.val_test import main as _val
         out = out_dir or Path("runs/val_test")
         _val(
-            weights=str(weights or self.cfg.weights),
-            val_dir=str(val_dir or (self.cfg.split_dir / "val" / "images")),
-            out_dir=str(out),
-            conf=conf or self.cfg.conf,
-            iou=iou   or self.cfg.iou,
+            weights = str(weights or self.cfg.weights),
+            val_dir = str(val_dir or (self.cfg.split_dir / "val" / "images")),
+            out_dir = str(out),
+            conf    = conf or self.cfg.conf,
+            iou     = iou  or self.cfg.iou,
         )
         return out / "results.txt"
 
-    # ── ROI calibration ───────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # ROI calibration
+    # ------------------------------------------------------------------
 
-    def calibrate_roi(self, image_path: str | Path, cage_type: str = "default") -> dict:
+    def calibrate_roi(
+        self,
+        image_path: str | Path,
+        cage_type: str = "default",
+    ) -> dict:
         from scripts.calibrate_roi import calibrate, print_config, save_debug
         zones = calibrate(Path(image_path))
         if zones:
@@ -251,46 +395,49 @@ class VivariumOrchestrator:
             save_debug(Path(image_path), zones)
         return zones
 
-    # ── Camera helpers ────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Pipeline workflow shortcuts
+    # ------------------------------------------------------------------
 
-    def set_reference_frame(self, frame: np.ndarray) -> None:
-        self._get_inference_pipeline().set_reference_frame(frame)
-
-    def has_motion(self, frame: np.ndarray) -> bool:
-        return self._get_inference_pipeline().has_motion(frame)
-
-    # ── Full workflow shortcuts ───────────────────────────────────────────
-
-    def run_data_pipeline(self, n_augments: int = 50, propagate: bool = True) -> None:
+    def run_data_pipeline(
+        self,
+        n_augments: int = 50,
+        propagate: bool = True,
+    ) -> None:
         """label → augment → clean → dedup → split"""
-        for i, (title, fn) in enumerate([
+        steps = [
             ("Label originals (GDINO)", lambda: self.label_originals(propagate=False)),
             ("Augment dataset",         lambda: self.augment(n=n_augments)),
             ("Clean food labels",       self.clean_food_labels),
             ("Dedup labels",            self.dedup_labels),
             ("Split dataset",           self.split_dataset),
-        ], 1):
-            print(f"\n{'='*55}\n{i}/5  {title}\n{'='*55}")
-            result = fn()
-            # propagate after augment if we have boxes
-            if i == 2 and propagate:
-                from scripts.gdino_label_originals import propagate_labels
-                # re-label to get stem_to_boxes (already cached in label step ideally)
-                pass
-
+        ]
+        for i, (title, fn) in enumerate(steps, 1):
+            print(f"\n{'='*55}\n{i}/{len(steps)}  {title}\n{'='*55}")
+            fn()
         print("\n✅ Data pipeline complete. Run orch.train() to start training.")
 
-    def run_full_pipeline(self, n_augments: int = 50, epochs: int = 100) -> Path:
+    def run_full_pipeline(
+        self,
+        n_augments: int = 50,
+        epochs: int = 100,
+    ) -> Path:
         """End-to-end: data prep → train → validate."""
         self.run_data_pipeline(n_augments=n_augments)
         best_pt = self.train(epochs=epochs)
         self.validate(weights=best_pt)
         return best_pt
 
-    # ── Private ───────────────────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Private
+    # ------------------------------------------------------------------
 
-    def _get_inference_pipeline(self):
-        if self._inference_pipeline is None:
-            from pipeline.yolo_pipeline import YOLOPipeline
-            self._inference_pipeline = YOLOPipeline()
-        return self._inference_pipeline
+    def _get_pipeline(self):
+        """Lazy-load (or rebuild after set_backend) the InferencePipeline."""
+        if self._pipeline is None:
+            from pipeline.pipeline import InferencePipeline
+            self._pipeline = InferencePipeline(
+                cage_type = self.cfg.cage_type,
+                backend   = self.cfg.backend,
+            )
+        return self._pipeline
