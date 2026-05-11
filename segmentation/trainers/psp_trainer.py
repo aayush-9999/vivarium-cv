@@ -39,8 +39,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-
-from segmentation.models.pspnet import PSPNet, build_water_model, build_food_model
+from segmentation.models.pspnet import  build_water_model, build_food_model, PSPNet
 from segmentation.models.level_estimator import (
     mask_to_fill_pct,
     WATER_FILL_CLASS, WATER_EMPTY_CLASS,

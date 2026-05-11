@@ -286,7 +286,7 @@ class LevelSegDataset(Dataset):
 
 def make_dataloaders(
     data_root:    Path,
-    container:    str,              # "water" or "food"
+    container:    str,              # "water" or "food" — used only if images/ not directly in data_root
     target_size:  tuple[int, int],
     batch_size:   int   = 8,
     val_split:    float = 0.15,
@@ -297,8 +297,12 @@ def make_dataloaders(
     Build train and val DataLoaders from a segmentation dataset.
 
     Args:
-        data_root   : root containing water/ and food/ subdirs
-        container   : "water" or "food"
+        data_root   : root folder. Two layouts supported:
+                        Layout A — data_root/images/ and data_root/masks/ exist directly
+                                   (use when data_root=dataset/segmentation/water)
+                        Layout B — data_root/water/images/ and data_root/water/masks/
+                                   (use when data_root=dataset/segmentation)
+        container   : "water" or "food" — only used for Layout B
         target_size : (H, W)
         batch_size  : training batch size
         val_split   : fraction of data for validation
@@ -310,8 +314,16 @@ def make_dataloaders(
     """
     import random as rng
 
-    img_dir  = Path(data_root) / container / "images"
-    mask_dir = Path(data_root) / container / "masks"
+    data_root = Path(data_root)
+
+    # Auto-detect layout: if images/ exists directly under data_root use it,
+    # otherwise fall back to data_root/container/images/
+    if (data_root / "images").exists():
+        img_dir  = data_root / "images"
+        mask_dir = data_root / "masks"
+    else:
+        img_dir  = data_root / container / "images"
+        mask_dir = data_root / container / "masks"
 
     full_dataset = LevelSegDataset(
         image_dir=img_dir,
