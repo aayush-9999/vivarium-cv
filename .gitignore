@@ -5,12 +5,12 @@ runs/
 archive/
 
 # ── Training artifacts ────────────────────────────────────────────────────────
+YOLOX_outputs\vivarium_yolox_tiny/
 YOLOX_outputs/
 *.tfevents.*
 *.pth
 *.pt
 *.onnx
-
 # ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
