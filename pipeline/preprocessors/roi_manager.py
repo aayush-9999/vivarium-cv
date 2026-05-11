@@ -1,7 +1,7 @@
 # preprocessing/roi_manager.py
 import numpy as np
 import cv2
-from core.config import ROI_ZONES
+from core.config_loader import CONFIG
 from core.exceptions import ROIError
 
 class ROIManager:
