@@ -1,10 +1,10 @@
 # preprocessing/frame_preprocessor.py
 import cv2
 import numpy as np
-from core.base_preprocessor import BasePreprocessor
+from pipeline.preprocessors.base import BasePreprocessor
 from core.config import INPUT_SIZE
 from core.exceptions import VivariumCVError
-from pipeline.preprocessing.roi_manager import ROIManager
+from pipeline.preprocessors.roi_manager import ROIManager
 
 class FramePreprocessor(BasePreprocessor):
     """
