@@ -29,8 +29,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.session import get_db
-from db import crud
+from pipeline.storage.postgres import get_db       
+from pipeline.storage.postgres import save_detection
 
 router = APIRouter(tags=["cages"])
 

@@ -23,8 +23,8 @@ from core.schemas import DetectionResult, BoundingBox
 from core.exceptions import VivariumCVError
 from core.config import YOLO_CLASS_MAP
 
-from pipeline.preprocessing.frame_preprocessor import FramePreprocessor
-from pipeline.preprocessing.background_subtractor import BackgroundSubtractor
+from pipeline.preprocessors.frame_preprocessor import FramePreprocessor
+from pipeline.preprocessors.background_subtractor import BackgroundSubtractor
 from pipeline.detectors.yolo.yolo_detector import YOLODetector
 
 

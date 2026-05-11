@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.schemas import DetectionResult
 from core.exceptions import VivariumCVError
 from pipeline.pipeline_factory import get_pipeline
-from db.session import get_db         
-from db.crud import save_detection     # thin write helper
+from pipeline.storage.postgres import get_db       
+from pipeline.storage.postgres import save_detection
 import logging
 logger = logging.getLogger("vivarium.api")
 

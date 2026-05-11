@@ -6,9 +6,9 @@ import numpy as np
 import torch
 import cv2
 
-from core.base_detector import BaseDetector
+from pipeline.detectors.base import BaseDetector
 from core.schemas import DetectionResult
-from core.config import YOLOX_WEIGHTS, YOLOX_EXP_FILE, YOLOX_INPUT_SIZE, YOLO_CONF_THRESHOLD, YOLO_IOU_THRESHOLD
+from core.config_loader import CONFIG
 from core.exceptions import DetectorInitError, InferenceError
 from pipeline.detectors.yolo.postprocessor import parse_yolox_results
 

@@ -1,7 +1,7 @@
 # core/base_detector.py
 import numpy as np
 from abc import ABC, abstractmethod
-from .schemas import DetectionResult
+from core.schemas import DetectionResult
 
 class BaseDetector(ABC):
 

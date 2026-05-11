@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from api.routes import infer, cages
 from api.middleware import register_middleware
-from db.session import create_tables
+from pipeline.storage.session import create_tables
 
 
 @asynccontextmanager

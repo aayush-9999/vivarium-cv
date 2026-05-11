@@ -22,10 +22,10 @@ from datetime import datetime, timezone
 
 from core.schemas import DetectionResult, LevelReading, BoundingBox
 from core.exceptions import VivariumCVError
-from pipeline.preprocessing.frame_preprocessor import FramePreprocessor
-from pipeline.preprocessing.background_subtractor import BackgroundSubtractor
+from pipeline.preprocessors.frame_preprocessor import FramePreprocessor
+from pipeline.preprocessors.background_subtractor import BackgroundSubtractor
 from pipeline.detectors.yolo.yolo_detector import YOLODetector
-from pipeline.segmentation.models.level_estimator import (
+from pipeline.measurers.pspnet_measurer import (
     LevelEstimator, pct_to_status, NO_CONTAINER_SENTINEL
 )
 
