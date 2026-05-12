@@ -1,12 +1,11 @@
-# core/config_loader.py
+# core/config_loader.py  — BEDDING PATCH
 """
 Central configuration loader.
 
-Reads .env via python-dotenv, then pulls hard-coded constants from
-core/config.py and merges everything into a single CONFIG dict.
-
-Every module that previously scattered os.getenv() calls should import
-CONFIG from here instead.
+Changes vs original:
+  - num_classes bumped to 10 (added class 9 = bedding)
+  - YOLO_CLASS_MAP now includes {9: "bedding"}
+  - BEDDING_AREA_THRESHOLD added (50 %) — bedding bbox area >= this → BAD
 
 Usage
 -----
@@ -17,10 +16,10 @@ Usage
     device    = CONFIG["device"]
     roi_zones = CONFIG["roi_zones"]
 
-    # Convenience re-exports for code that imports them directly
     from core.config_loader import (
         YOLOX_EXP_FILE, YOLOX_INPUT_SIZE,
         YOLO_CONF_THRESHOLD, YOLO_IOU_THRESHOLD,
+        BEDDING_AREA_THRESHOLD,
     )
 """
 from __future__ import annotations
@@ -29,17 +28,15 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Load .env as early as possible so every subsequent os.getenv() sees the values.
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass   # dotenv is optional; caller must set env vars externally
+    pass
 
 
 # ---------------------------------------------------------------------------
 # Pull hard-coded constants from core/config.py
-# Safe fallbacks so the loader works even before config.py is populated.
 # ---------------------------------------------------------------------------
 try:
     from core.config import (          # type: ignore[import]
@@ -70,6 +67,12 @@ except ImportError:
     ]
     MOTION_PIXEL_THRESHOLD   = 0.02
 
+# Ensure class 9 (bedding) is always in the class map —
+# even if core/config.py hasn't been updated yet.
+if 9 not in YOLO_CLASS_MAP:
+    YOLO_CLASS_MAP = dict(YOLO_CLASS_MAP)   # copy so we don't mutate the imported object
+    YOLO_CLASS_MAP[9] = "bedding"
+
 
 # ---------------------------------------------------------------------------
 # YOLOX experiment file + inference constants
@@ -83,9 +86,12 @@ YOLOX_INPUT_SIZE: tuple[int, int] = tuple(INPUT_SIZE)  # type: ignore[assignment
 YOLO_CONF_THRESHOLD = float(os.getenv("YOLO_CONF", "0.35"))
 YOLO_IOU_THRESHOLD  = float(os.getenv("YOLO_IOU",  "0.45"))
 
+# Bedding: bbox area fraction of frame >= this → condition = "BAD"
+BEDDING_AREA_THRESHOLD = float(os.getenv("BEDDING_AREA_THRESHOLD", "50.0"))
+
 
 # ---------------------------------------------------------------------------
-# Master CONFIG dict — single source of truth for the whole project
+# Master CONFIG dict
 # ---------------------------------------------------------------------------
 CONFIG: dict[str, Any] = {
     # ── Runtime ──────────────────────────────────────────────────────────
@@ -99,7 +105,7 @@ CONFIG: dict[str, Any] = {
         "input_size":  YOLOX_INPUT_SIZE,
         "conf_thre":   YOLO_CONF_THRESHOLD,
         "nms_thre":    YOLO_IOU_THRESHOLD,
-        "num_classes": 9,
+        "num_classes": 10,   # ← was 9; +1 for bedding (class 9)
     },
 
     # ── SSD (legacy) ─────────────────────────────────────────────────────
@@ -109,7 +115,7 @@ CONFIG: dict[str, Any] = {
 
     # ── PSPNet ────────────────────────────────────────────────────────────
     "pspnet": {
-        "water_weights":     os.getenv("PSP_WATER_WEIGHTS"),   # None = not loaded
+        "water_weights":     os.getenv("PSP_WATER_WEIGHTS"),
         "food_weights":      os.getenv("PSP_FOOD_WEIGHTS"),
         "backbone":          os.getenv("PSP_BACKBONE", "resnet50"),
         "fallback_to_yolox": True,
@@ -119,6 +125,12 @@ CONFIG: dict[str, Any] = {
     "thresholds": {
         "water": {"CRITICAL": (0.0, 15.0), "LOW": (15.0, 35.0), "OK": (35.0, 100.1)},
         "food":  {"CRITICAL": (0.0, 15.0), "LOW": (15.0, 35.0), "OK": (35.0, 100.1)},
+    },
+
+    # ── Bedding ───────────────────────────────────────────────────────────
+    "bedding": {
+        # bbox_area_pct >= this threshold → BAD, else GOOD
+        "area_threshold": BEDDING_AREA_THRESHOLD,
     },
 
     # ── Camera / motion ───────────────────────────────────────────────────

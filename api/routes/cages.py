@@ -1,17 +1,17 @@
-# api/routes/cages.py
+# api/routes/cages.py  — BEDDING PATCH
 """
 Vivarium cage monitoring endpoints.
 
-These are the only REST endpoints that belong in a production inference
-server — querying cage state, history, and alerts.
-
-All ML training / data-pipeline operations have been removed from the API.
-Run those via the orchestrator directly or via the CLI scripts in scripts/.
+BEDDING PATCH
+─────────────
+• CageLatestResponse now includes bedding_area_pct / bedding_condition.
+• GET /cages/critical now returns cages with bedding_condition="BAD" too.
+• POST /alerts/{cage_id}/resolve accepts alert_type="bedding_bad".
 
 Endpoints
 ─────────
 GET  /cages                         — latest reading for every known cage
-GET  /cages/critical                — cages currently in CRITICAL state
+GET  /cages/critical                — cages with CRITICAL water/food **or** BAD bedding
 GET  /cages/{cage_id}               — latest reading for one cage
 GET  /cages/{cage_id}/history       — recent reading history for one cage
 
@@ -28,9 +28,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from pipeline.storage import postgres as crud
 from pipeline.storage.session import get_db
-from pipeline.storage import postgres as crud
 
 router = APIRouter(tags=["cages"])
 
@@ -40,15 +40,19 @@ router = APIRouter(tags=["cages"])
 # ─────────────────────────────────────────────────────────────────────────────
 
 class CageLatestResponse(BaseModel):
-    cage_id:      str
-    recorded_at:  datetime
-    mouse_count:  Optional[int]
-    water_pct:    Optional[float]
-    water_status: Optional[str]
-    food_pct:     Optional[float]
-    food_status:  Optional[str]
-    inference_ms: Optional[int]
-    image_path:   Optional[str]
+    cage_id:           str
+    recorded_at:       datetime
+    mouse_count:       Optional[int]
+    water_pct:         Optional[float]
+    water_status:      Optional[str]
+    food_pct:          Optional[float]
+    food_status:       Optional[str]
+    # ── Bedding ───────────────────────────────────────────────────────────
+    bedding_area_pct:  Optional[float]   # 0–100 (% of frame)
+    bedding_condition: Optional[str]     # GOOD | BAD
+    # ─────────────────────────────────────────────────────────────────────
+    inference_ms:      Optional[int]
+    image_path:        Optional[str]
 
     class Config:
         from_attributes = True
@@ -83,31 +87,24 @@ class ResolveResponse(BaseModel):
     summary="Latest reading for every known cage",
 )
 async def list_cages(db: AsyncSession = Depends(get_db)):
-    """
-    Returns the single most-recent reading for every cage_id that has
-    ever sent a frame.  Useful for a dashboard overview.
-    """
     readings = await crud.get_all_latest_readings(db)
-    if not readings:
-        return []
-    return readings
+    return readings or []
 
 
 @router.get(
     "/cages/critical",
     response_model=list[CageLatestResponse],
-    summary="Cages currently in CRITICAL state",
+    summary="Cages currently in CRITICAL state or with BAD bedding",
 )
 async def list_critical_cages(db: AsyncSession = Depends(get_db)):
     """
-    Returns the latest reading for every cage where water OR food status
-    is currently CRITICAL.  Intended as the data source for alert systems —
-    poll this endpoint to know which cages need immediate attention.
+    Returns the latest reading for every cage where:
+      - water OR food status is CRITICAL, **or**
+      - bedding condition is BAD (area_pct >= 50 %).
 
-    Empty list means all cages are OK.
+    An empty list means all cages are OK.
     """
-    readings = await crud.get_critical_cages(db)
-    return readings
+    return await crud.get_critical_cages(db)
 
 
 @router.get(
@@ -116,10 +113,6 @@ async def list_critical_cages(db: AsyncSession = Depends(get_db)):
     summary="Latest reading for a specific cage",
 )
 async def get_cage(cage_id: str, db: AsyncSession = Depends(get_db)):
-    """
-    Returns the most recent DetectionResult stored for this cage_id.
-    Raises 404 if the cage has never sent a frame.
-    """
     reading = await crud.get_latest_reading(db, cage_id)
     if reading is None:
         raise HTTPException(
@@ -136,16 +129,9 @@ async def get_cage(cage_id: str, db: AsyncSession = Depends(get_db)):
 )
 async def get_cage_history(
     cage_id: str,
-    limit:   int = Query(default=50, ge=1, le=500, description="Number of readings to return"),
+    limit:   int = Query(default=50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Returns the last N readings for a cage, newest first.
-    Use this to plot water/food level trends over time.
-
-    - Default: 50 readings
-    - Max: 500 readings
-    """
     readings = await crud.get_cage_history(db, cage_id, limit=limit)
     if not readings:
         raise HTTPException(
@@ -166,17 +152,12 @@ async def get_cage_history(
 )
 async def list_active_alerts(db: AsyncSession = Depends(get_db)):
     """
-    Returns every unresolved alert across all cages, newest first.
-
     Alert types:
-    - water_critical  — water level dropped to CRITICAL (0–15%)
-    - food_critical   — food level dropped to CRITICAL (0–15%)
-
-    Alerts are auto-created when a detection result comes in with a
-    CRITICAL status.  They remain open until resolved via POST /alerts/{cage_id}/resolve.
+    - water_critical — water level dropped to CRITICAL (0–15 %)
+    - food_critical  — food level dropped to CRITICAL (0–15 %)
+    - bedding_bad    — bedding area >= 50 % of frame (needs changing)
     """
-    alerts = await crud.get_active_alerts(db)
-    return alerts
+    return await crud.get_active_alerts(db)
 
 
 @router.get(
@@ -186,23 +167,13 @@ async def list_active_alerts(db: AsyncSession = Depends(get_db)):
 )
 async def get_cage_alerts(
     cage_id:          str,
-    include_resolved: bool = Query(default=False, description="Include resolved alerts"),
+    include_resolved: bool = Query(default=False),
     limit:            int  = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Returns alerts for a specific cage.
-
-    By default returns only active (unresolved) alerts.
-    Pass `include_resolved=true` to also see historical resolved alerts.
-    """
-    alerts = await crud.get_alerts_for_cage(
-        db,
-        cage_id,
-        include_resolved=include_resolved,
-        limit=limit,
+    return await crud.get_alerts_for_cage(
+        db, cage_id, include_resolved=include_resolved, limit=limit,
     )
-    return alerts
 
 
 @router.post(
@@ -214,20 +185,21 @@ async def resolve_cage_alert(
     cage_id:    str,
     alert_type: str = Query(
         ...,
-        description="Alert type to resolve: 'water_critical' or 'food_critical'",
+        description=(
+            "Alert type to resolve: "
+            "'water_critical' | 'food_critical' | 'bedding_bad'"
+        ),
     ),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Marks all open alerts of the given type for this cage as resolved.
 
-    Call this after a cage has been refilled / restocked so the alert
-    stops appearing in GET /alerts and GET /cages/critical.
-
-    Example:
+    Examples:
         POST /alerts/cage_01/resolve?alert_type=water_critical
+        POST /alerts/cage_01/resolve?alert_type=bedding_bad
     """
-    valid_types = {"water_critical", "food_critical"}
+    valid_types = {"water_critical", "food_critical", "bedding_bad"}
     if alert_type not in valid_types:
         raise HTTPException(
             status_code=422,
