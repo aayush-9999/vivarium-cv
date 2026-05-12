@@ -50,16 +50,6 @@ class InferencePipeline:
 
         # PSPNet — only for yolo_psp backend
         self._estimator: Optional[object] = None
-        self._bedding_assessor: Optional[ClipBeddingAssessor] = None
-        if CONFIG.get("bedding", {}).get("use_clip", True):
-            try:
-                self._bedding_assessor = ClipBeddingAssessor(
-                    device=CONFIG["device"],
-                    dirty_threshold=CONFIG["bedding"].get("clip_dirty_threshold", 0.55),
-                )
-            except Exception as exc:
-                logger.warning("ClipBeddingAssessor failed to load: %s — bedding will use YOLOX area only", exc)
- 
         if self._backend == "yolo_psp":
             self._estimator = self._load_pspnet()
 
@@ -95,28 +85,18 @@ class InferencePipeline:
                 )
             water = yolo_result.water
             food  = yolo_result.food
-        if self._bedding_assessor is not None and self._bedding_assessor.is_ready():
-            bedding = self._bedding_assessor.assess(
-                frame            = frame,
-                bedding_bbox     = yolo_result.bedding_bbox,
-                bedding_area_pct = yolo_result.bedding.area_pct,
-            )
-        else:
-            # Fall back to pure YOLOX area-based reading (already works)
-            bedding = yolo_result.bedding
-        
+
         result = DetectionResult(
             cage_id      = cage_id,
             timestamp    = datetime.now(tz=timezone.utc),
             mouse_count  = yolo_result.mouse_count,
             water        = water,
             food         = food,
-            bedding      = bedding,              # <-- now CLIP-assessed
             inference_ms = yolo_result.inference_ms,
             water_bbox   = yolo_result.water_bbox,
             food_bbox    = yolo_result.food_bbox,
-            bedding_bbox = yolo_result.bedding_bbox,
         )
+
         if save_flagged and _is_critical(result):
             annotated  = self._annotator.draw(frame, result)
             image_path = _save_frame(annotated, cage_id, output_dir)
