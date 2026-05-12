@@ -22,7 +22,7 @@ class Exp(MyExp):
     def __init__(self):
         super().__init__()
         self.exp_name         = "vivarium_yolox_tiny"
-        self.num_classes      = 10          # ← was 9; +1 for bedding
+        self.num_classes      = 9          # ← was 9; +1 for bedding
         self.depth            = 0.33
         self.width            = 0.375
         self.input_size       = (640, 640)

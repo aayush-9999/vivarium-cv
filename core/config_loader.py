@@ -105,7 +105,7 @@ CONFIG: dict[str, Any] = {
         "input_size":  YOLOX_INPUT_SIZE,
         "conf_thre":   YOLO_CONF_THRESHOLD,
         "nms_thre":    YOLO_IOU_THRESHOLD,
-        "num_classes": 10,   # ← was 9; +1 for bedding (class 9)
+        "num_classes": 9,   # ← was 9; +1 for bedding (class 9)
     },
 
     # ── SSD (legacy) ─────────────────────────────────────────────────────
@@ -131,6 +131,8 @@ CONFIG: dict[str, Any] = {
     "bedding": {
         # bbox_area_pct >= this threshold → BAD, else GOOD
         "area_threshold": BEDDING_AREA_THRESHOLD,
+            "use_clip":            True,                      # ADD: set False to disable CLIP
+            "clip_dirty_threshold": 0.55, 
     },
 
     # ── Camera / motion ───────────────────────────────────────────────────
