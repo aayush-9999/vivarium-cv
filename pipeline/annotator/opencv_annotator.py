@@ -10,13 +10,25 @@ STATUS_COLORS = {
     "CRITICAL": (0,     0, 255),
 }
 
+# Bedding condition colours
+BEDDING_COLORS = {
+    "GOOD": (80,  200,  80),   # green
+    "BAD":  (0,     0, 255),   # red
+}
+
+
 class OpenCVAnnotator(BaseAnnotator):
     def draw(self, frame: np.ndarray, result: DetectionResult) -> np.ndarray:
         viz = frame.copy()
-        for bbox, label in [
-            (result.water_bbox, f"water {result.water.pct:.1f}% [{result.water.status}]"),
-            (result.food_bbox,  f"food  {result.food.pct:.1f}%  [{result.food.status}]"),
-        ]:
+
+        # ── Bounding boxes ────────────────────────────────────────────────
+        container_items = [
+            (result.water_bbox,
+             f"water {result.water.pct:.1f}% [{result.water.status}]"),
+            (result.food_bbox,
+             f"food  {result.food.pct:.1f}%  [{result.food.status}]"),
+        ]
+        for bbox, label in container_items:
             if bbox is not None:
                 x1, y1, x2, y2 = int(bbox.x1), int(bbox.y1), int(bbox.x2), int(bbox.y2)
                 color = (255, 180, 0) if "water" in label else (0, 200, 80)
@@ -25,13 +37,35 @@ class OpenCVAnnotator(BaseAnnotator):
                             (x1 + 4, y1 + 16),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
+        # ── Bedding bbox ──────────────────────────────────────────────────
+        if result.bedding_bbox is not None:
+            bb = result.bedding_bbox
+            x1, y1, x2, y2 = int(bb.x1), int(bb.y1), int(bb.x2), int(bb.y2)
+            b_color = BEDDING_COLORS.get(result.bedding.condition, (200, 200, 200))
+            cv2.rectangle(viz, (x1, y1), (x2, y2), b_color, 2)
+            b_label = (
+                f"bedding {result.bedding.area_pct:.0f}% [{result.bedding.condition}]"
+                f" ({bb.conf:.2f})"
+            )
+            cv2.putText(viz, b_label,
+                        (x1 + 4, y1 + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, b_color, 1, cv2.LINE_AA)
+
+        # ── Summary overlay ───────────────────────────────────────────────
         summary = [
-            ("OK",                f"Mice : {result.mouse_count}"),
-            (result.water.status, f"Water: {result.water.pct:.1f}%  [{result.water.status}]"),
-            (result.food.status,  f"Food : {result.food.pct:.1f}%  [{result.food.status}]"),
+            ("OK",                    f"Mice    : {result.mouse_count}"),
+            (result.water.status,     f"Water   : {result.water.pct:.1f}%  [{result.water.status}]"),
+            (result.food.status,      f"Food    : {result.food.pct:.1f}%  [{result.food.status}]"),
+            # bedding uses its own colour mapping
+            (None,                    f"Bedding : {result.bedding.area_pct:.0f}%  [{result.bedding.condition}]"),
         ]
+
         for i, (status, line) in enumerate(summary):
-            color = STATUS_COLORS.get(status, (160, 160, 160))
+            if status is None:
+                # Bedding line — use condition colour
+                color = BEDDING_COLORS.get(result.bedding.condition, (160, 160, 160))
+            else:
+                color = STATUS_COLORS.get(status, (160, 160, 160))
             y = 20 + i * 22
             cv2.putText(viz, line, (8, y), cv2.FONT_HERSHEY_SIMPLEX,
                         0.6, (0, 0, 0), 3, cv2.LINE_AA)

@@ -45,17 +45,48 @@ class LevelReading(BaseModel):
         return cls(pct=0.0, status="CRITICAL")
 
 
+class BeddingReading(BaseModel):
+    """
+    Bedding cleanliness result derived from the bedding YOLOX detection.
+
+    area_pct : estimated fraction of the cage floor covered by bedding (0–100).
+               Computed as (bbox_area / frame_area) * 100 from the YOLOX bbox.
+               When multiple bedding boxes are found the sum of their areas is used
+               (capped at 100).
+    condition : "GOOD"  — area_pct < 50  → bedding occupies less than half the floor,
+                           still clean / not soiled.
+               "BAD"   — area_pct >= 50 → bedding covers >= 50 % of the floor,
+                           likely soiled / needs changing.
+    """
+    area_pct:  float = Field(..., ge=0.0, le=100.0, description="Bedding bbox area % of frame")
+    condition: str   = Field(..., pattern="^(GOOD|BAD)$")
+
+    @classmethod
+    def from_area_pct(cls, area_pct: float) -> "BeddingReading":
+        condition = "BAD" if area_pct >= 50.0 else "GOOD"
+        return cls(area_pct=round(area_pct, 2), condition=condition)
+
+    @classmethod
+    def not_detected(cls) -> "BeddingReading":
+        """No bedding box found — treat as GOOD (assume clean / empty frame)."""
+        return cls(area_pct=0.0, condition="GOOD")
+
+
 class DetectionResult(BaseModel):
     cage_id:      str
     timestamp:    datetime
     mouse_count:  int             = Field(..., ge=0)
     water:        LevelReading
     food:         LevelReading
+    bedding:      BeddingReading  = Field(
+        default_factory=BeddingReading.not_detected,
+        description="Bedding cleanliness reading (GOOD / BAD)",
+    )
     inference_ms: Optional[int]   = None
     image_path:   Optional[str]   = None
     water_bbox:   Optional[BoundingBox] = None
     food_bbox:    Optional[BoundingBox] = None
+    bedding_bbox: Optional[BoundingBox] = None
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}
-
