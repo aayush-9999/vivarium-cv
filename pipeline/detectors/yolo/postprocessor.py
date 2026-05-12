@@ -99,7 +99,8 @@ def parse_yolox_results(
     mouse_count                = int(np.sum(classes == mouse_id))
     water_reading, water_bbox  = _best_level(boxes, scores, classes, WATER_CLASS_IDS)
     food_reading,  food_bbox   = _best_level(boxes, scores, classes, FOOD_CLASS_IDS)
-    bedding_reading, bedding_bbox = _bedding_result(boxes, scores, classes)
+    bedding_reading = BeddingReading.not_detected()
+    bedding_bbox    = None
 
     return DetectionResult(
         cage_id      = cage_id,
