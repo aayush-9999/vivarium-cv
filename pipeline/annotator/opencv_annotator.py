@@ -12,16 +12,35 @@ STATUS_COLORS = {
 
 # Bedding condition colours
 BEDDING_COLORS = {
-    "GOOD": (80,  200,  80),   # green
-    "BAD":  (0,     0, 255),   # red
+    "PERFECT": (80,  200,  80),    # green
+    "OK":      (0,   180, 255),    # amber-ish
+    "BAD":     (0,   100, 255),    # orange-red
+    "WORST":   (0,     0, 255),    # red
 }
+
+# Mouse bbox colour — distinct cyan so it doesn't clash with water/food
+MOUSE_COLOR = (255, 220, 0)    # bright cyan-yellow
 
 
 class OpenCVAnnotator(BaseAnnotator):
     def draw(self, frame: np.ndarray, result: DetectionResult) -> np.ndarray:
         viz = frame.copy()
 
-        # ── Bounding boxes ────────────────────────────────────────────────
+        # ── Per-mouse bounding boxes ──────────────────────────────────────
+        # PATCH: iterate result.mouse_bboxes (list[BoundingBox]) so each
+        # detected mouse gets its own labelled box drawn.
+        mouse_bboxes = getattr(result, "mouse_bboxes", None) or []
+        for i, bbox in enumerate(mouse_bboxes, start=1):
+            x1, y1, x2, y2 = int(bbox.x1), int(bbox.y1), int(bbox.x2), int(bbox.y2)
+            cv2.rectangle(viz, (x1, y1), (x2, y2), MOUSE_COLOR, 2)
+            cv2.putText(
+                viz,
+                f"mouse {i} ({bbox.conf:.2f})",
+                (x1 + 4, y1 + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, MOUSE_COLOR, 1, cv2.LINE_AA,
+            )
+
+        # ── Water / food bounding boxes ───────────────────────────────────
         container_items = [
             (result.water_bbox,
              f"water {result.water.pct:.1f}% [{result.water.status}]"),

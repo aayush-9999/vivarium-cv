@@ -21,8 +21,8 @@ from yolox.exp import Exp as MyExp
 class Exp(MyExp):
     def __init__(self):
         super().__init__()
-        self.exp_name         = "vivarium_yolox_tiny"
-        self.num_classes      = 9          # ← was 9; +1 for bedding
+        self.exp_name    = "yolox_vivarium_tiny"
+        self.num_classes      = 13        
         self.depth            = 0.33
         self.width            = 0.375
         self.input_size       = (640, 640)
@@ -40,7 +40,7 @@ class Exp(MyExp):
         self.test_conf        = 0.35
         self.nmsthre          = 0.45
         self.output_dir       = "YOLOX_outputs"
-
+        self.batch_size = 8 
     def get_dataset(self, cache: bool = False, cache_type: str = "ram"):
         from yolox.data import COCODataset, TrainTransform
         return COCODataset(

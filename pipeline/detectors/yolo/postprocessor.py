@@ -17,6 +17,11 @@ from CONFIG["bedding"]["area_threshold"] (default 50 %).
 
 If no bedding box is detected, BeddingReading.not_detected() is returned
 (area_pct=0, condition="GOOD").
+
+MOUSE BBOX PATCH
+────────────────
+All mouse detections are now returned as a list[BoundingBox] on
+DetectionResult.mouse_bboxes so the annotator can draw a box per mouse.
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ logger = logging.getLogger("vivarium.postprocessor")
 # Class ID groups
 WATER_CLASS_IDS   = {1, 2, 3, 4}
 FOOD_CLASS_IDS    = {5, 6, 7, 8}
-BEDDING_CLASS_ID  = 9
+BEDDING_CLASS_IDS = {9, 10, 11, 12}
 
 # Frame size used during YOLOX training (used for bedding area calculation)
 _FRAME_AREA = 640 * 640
@@ -73,6 +78,7 @@ def parse_yolox_results(
             cage_id      = cage_id,
             timestamp    = datetime.now(tz=timezone.utc),
             mouse_count  = 0,
+            mouse_bboxes = [],                        # ← PATCH: empty list
             water        = LevelReading.unknown(),
             food         = LevelReading.unknown(),
             bedding      = BeddingReading.not_detected(),
@@ -94,18 +100,38 @@ def parse_yolox_results(
     classes = detections[:, 6].astype(int)
 
     yolo_class_map = CONFIG["yolo_class_map"]
-    mouse_id = next((k for k, v in yolo_class_map.items() if v == "mouse"), 0)
+    mouse_id = next(
+    (int(k) for k, v in yolo_class_map.items() if v == "mouse"), 0
+)
 
-    mouse_count                = int(np.sum(classes == mouse_id))
+    # ── PATCH: collect per-mouse bboxes ──────────────────────────────────────
+    mouse_bboxes: list[BoundingBox] = []
+    for box, score, cls in zip(boxes, scores, classes):
+        if int(cls) == mouse_id:
+            mouse_bboxes.append(BoundingBox(
+                x1   = float(box[0]),
+                y1   = float(box[1]),
+                x2   = float(box[2]),
+                y2   = float(box[3]),
+                conf = float(score),
+            ))
+    logger.warning("DEBUG mouse_id=%r  mouse_bboxes=%d  classes=%s",
+               mouse_id, len(mouse_bboxes), classes[:10].tolist())
+    mouse_count = len(mouse_bboxes)
+    # ─────────────────────────────────────────────────────────────────────────
+
     water_reading, water_bbox  = _best_level(boxes, scores, classes, WATER_CLASS_IDS)
     food_reading,  food_bbox   = _best_level(boxes, scores, classes, FOOD_CLASS_IDS)
-    bedding_reading = BeddingReading.not_detected()
-    bedding_bbox    = None
+
+    # ── PATCH: activate bedding detection (was hardcoded to not_detected) ────
+    bedding_reading, bedding_bbox = _bedding_result(boxes, scores, classes)
+    # ─────────────────────────────────────────────────────────────────────────
 
     return DetectionResult(
         cage_id      = cage_id,
         timestamp    = datetime.now(tz=timezone.utc),
         mouse_count  = mouse_count,
+        mouse_bboxes = mouse_bboxes,                  # ← PATCH: pass through
         water        = water_reading,
         food         = food_reading,
         bedding      = bedding_reading,
@@ -126,48 +152,33 @@ def _bedding_result(
     classes: np.ndarray,
 ) -> tuple[BeddingReading, Optional[BoundingBox]]:
     """
-    Aggregate all bedding detections (class 9).
-
-    area_pct = sum(bbox_areas) / frame_area * 100
-    condition = BAD if area_pct >= threshold, else GOOD
-
-    Returns the highest-confidence single bbox for visualisation.
+    Pick the highest-confidence bedding detection.
+    Condition comes directly from class ID — no area threshold needed.
     """
-    threshold = CONFIG["bedding"]["area_threshold"]
-
-    bedding_boxes  = []
-    best_conf      = -1.0
-    best_box       = None
+    best_conf = -1.0
+    best_box  = None
+    best_cls  = None
+    total_area = 0.0
 
     for box, score, cls in zip(boxes, scores, classes):
-        if int(cls) != BEDDING_CLASS_ID:
+        if int(cls) not in BEDDING_CLASS_IDS:
             continue
         x1, y1, x2, y2 = box
-        w = max(0.0, float(x2 - x1))
-        h = max(0.0, float(y2 - y1))
-        bedding_boxes.append(w * h)
-
+        total_area += max(0.0, float(x2-x1)) * max(0.0, float(y2-y1))
         if float(score) > best_conf:
             best_conf = float(score)
+            best_cls  = int(cls)
             best_box  = box
 
-    if not bedding_boxes:
+    if best_cls is None:
         return BeddingReading.not_detected(), None
 
-    total_area_pct = min(100.0, sum(bedding_boxes) / _FRAME_AREA * 100.0)
-    reading = BeddingReading.from_area_pct(total_area_pct)
-
-    bbox = BoundingBox(
-        x1   = float(best_box[0]),
-        y1   = float(best_box[1]),
-        x2   = float(best_box[2]),
-        y2   = float(best_box[3]),
-        conf = best_conf,
-    )
-
-    logger.debug(
-        "Bedding: total_area_pct=%.1f%%  condition=%s  threshold=%.0f%%",
-        total_area_pct, reading.condition, threshold,
+    area_pct = min(100.0, total_area / _FRAME_AREA * 100.0)
+    reading  = BeddingReading.from_class_id(best_cls, area_pct)
+    bbox     = BoundingBox(
+        x1=float(best_box[0]), y1=float(best_box[1]),
+        x2=float(best_box[2]), y2=float(best_box[3]),
+        conf=best_conf,
     )
     return reading, bbox
 
