@@ -44,32 +44,26 @@ class LevelReading(BaseModel):
         """Used when YOLO didn't detect any container at all."""
         return cls(pct=0.0, status="CRITICAL")
 
+# core/schemas.py 
 
 class BeddingReading(BaseModel):
-    """
-    Bedding cleanliness result derived from the bedding YOLOX detection.
-
-    area_pct : estimated fraction of the cage floor covered by bedding (0–100).
-               Computed as (bbox_area / frame_area) * 100 from the YOLOX bbox.
-               When multiple bedding boxes are found the sum of their areas is used
-               (capped at 100).
-    condition : "GOOD"  — area_pct < 50  → bedding occupies less than half the floor,
-                           still clean / not soiled.
-               "BAD"   — area_pct >= 50 → bedding covers >= 50 % of the floor,
-                           likely soiled / needs changing.
-    """
-    area_pct:  float = Field(..., ge=0.0, le=100.0, description="Bedding bbox area % of frame")
-    condition: str   = Field(..., pattern="^(GOOD|BAD)$")
+    area_pct:  float = Field(..., ge=0.0, le=100.0)
+    condition: str   = Field(..., pattern="^(WORST|BAD|OK|PERFECT)$")
 
     @classmethod
-    def from_area_pct(cls, area_pct: float) -> "BeddingReading":
-        condition = "BAD" if area_pct >= 50.0 else "GOOD"
+    def from_class_id(cls, class_id: int, area_pct: float = 0.0) -> "BeddingReading":
+        mapping = {
+            9:  "WORST",
+            10: "BAD",
+            11: "OK",
+            12: "PERFECT",
+        }
+        condition = mapping.get(class_id, "OK")
         return cls(area_pct=round(area_pct, 2), condition=condition)
 
     @classmethod
     def not_detected(cls) -> "BeddingReading":
-        """No bedding box found — treat as GOOD (assume clean / empty frame)."""
-        return cls(area_pct=0.0, condition="GOOD")
+        return cls(area_pct=0.0, condition="OK")
 
 
 class DetectionResult(BaseModel):
@@ -84,6 +78,7 @@ class DetectionResult(BaseModel):
     )
     inference_ms: Optional[int]   = None
     image_path:   Optional[str]   = None
+    mouse_bboxes: list[BoundingBox] = Field(default_factory=list)
     water_bbox:   Optional[BoundingBox] = None
     food_bbox:    Optional[BoundingBox] = None
     bedding_bbox: Optional[BoundingBox] = None

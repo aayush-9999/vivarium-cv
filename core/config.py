@@ -11,7 +11,7 @@ FRAMES_DIR = BASE_DIR / "frames"
 YOLOX_WEIGHTS = BASE_DIR / "YOLOX_outputs" / "vivarium_yolox_tiny" / "latest_ckpt.pth"
 YOLOX_EXP_FILE = BASE_DIR / "exps" / "vivarium_yolox_tiny.py"  # required experiment config
 YOLOX_INPUT_SIZE = (640, 640)   # YOLOx uses (h, w) tuples not (w, h)
-NUM_CLASSES = 9      
+NUM_CLASSES = 13     
 # ── Model input ───────────────────────────────────────────────────────────────
 INPUT_SIZE = (640, 640)
 
@@ -35,6 +35,7 @@ YOLO_CLASS_NAMES = [
     "mouse",
     "water_critical", "water_low", "water_ok", "water_full",
     "food_critical",  "food_low",  "food_ok",  "food_full",
+    "bedding_worst","bedding_bad","bedding_ok","bedding_perfect"
 ]
 
 YOLO_CLASS_MAP: dict[int, str] = {i: n for i, n in enumerate(YOLO_CLASS_NAMES)}
