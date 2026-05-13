@@ -183,6 +183,7 @@ def _bedding_result(
         # Best bbox for visualisation = highest confidence
         if float(score) > best_conf:
             best_conf = float(score)
+            best_cls  = int(cls)
             best_box  = box
 
     if worst_cls is None:
