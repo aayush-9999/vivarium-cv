@@ -1,93 +1,78 @@
+# scripts/split_dataset.py
 """
-scripts/split_dataset.py
-========================
-Splits images + labels into train/val sets.
-
-Default mode (augmented dataset):
-    python scripts/split_dataset.py
-
-Direct from originals (no augmentation):
-    python scripts/split_dataset.py \
-        --img-dir   dataset/original \
-        --label-dir dataset/original_labels_9class \
-        --out       dataset/split
+Splits dataset/augmented → dataset/split/train and dataset/split/val.
+Only copies images that have a non-empty label file (labelled images only).
 """
-
-from __future__ import annotations
-
-import argparse
-import shutil
 import random
+import shutil
 from pathlib import Path
+from collections import Counter
 
+SRC_IMGS   = Path("dataset/augmented/images")
+SRC_LABELS = Path("dataset/augmented/labels")
+DST        = Path("dataset/split")
+TRAIN_RATIO = 0.85
+SEED        = 42
 
-def main(
-    img_dir:   Path,
-    label_dir: Path,
-    out_dir:   Path,
-    train_ratio: float,
-    seed: int,
-) -> None:
-    random.seed(seed)
+CLASS_NAMES = [
+    "mouse",
+    "water_critical", "water_low", "water_ok", "water_full",
+    "food_critical",  "food_low",  "food_ok",  "food_full",
+    "bedding_worst",  "bedding_bad", "bedding_ok", "bedding_perfect",
+]
 
-    SKIP = {"classes.txt"}
+random.seed(SEED)
 
-    # Find all label files that have content and a matching image
-    labelled = []
-    for lbl in label_dir.glob("*.txt"):
-        if lbl.name in SKIP:
-            continue
-        if lbl.stat().st_size == 0:
-            continue
-        # Find matching image — try .jpg first then .png
-        img = img_dir / (lbl.stem + ".jpg")
-        if not img.exists():
-            img = img_dir / (lbl.stem + ".png")
-        if not img.exists():
-            img = img_dir / (lbl.stem + ".jpeg")
+# Only use images that have a non-empty label file
+labelled = [
+    p for p in SRC_LABELS.glob("*.txt")
+    if p.name != "classes.txt" and p.stat().st_size > 0
+]
+random.shuffle(labelled)
+
+split_idx  = int(len(labelled) * TRAIN_RATIO)
+train_set  = labelled[:split_idx]
+val_set    = labelled[split_idx:]
+
+print(f"Total labelled: {len(labelled)}  →  train={len(train_set)}  val={len(val_set)}")
+
+# Verify class IDs before copying
+counter = Counter()
+bad = []
+for lf in labelled:
+    for line in lf.read_text().strip().splitlines():
+        parts = line.strip().split()
+        if len(parts) == 5:
+            cls = int(parts[0])
+            if cls not in range(13):
+                bad.append((lf.name, cls))
+            else:
+                counter[cls] += 1
+
+print("\nClass distribution going into split:")
+for cls_id in range(13):
+    print(f"  {cls_id:2d}  {CLASS_NAMES[cls_id]:<20} : {counter.get(cls_id, 0)}")
+
+if bad:
+    print(f"\n❌ {len(bad)} invalid class IDs found — fix before splitting!")
+    raise SystemExit(1)
+print("\n✅ Class IDs valid. Copying files...\n")
+
+for split_name, split_files in [("train", train_set), ("val", val_set)]:
+    img_out = DST / split_name / "images"
+    lbl_out = DST / split_name / "labels"
+    img_out.mkdir(parents=True, exist_ok=True)
+    lbl_out.mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    for lf in split_files:
+        img = SRC_IMGS / (lf.stem + ".jpg")
         if img.exists():
-            labelled.append((img, lbl))
+            shutil.copy(img, img_out / img.name)
+            shutil.copy(lf,  lbl_out / lf.name)
+            copied += 1
+        else:
+            print(f"  [WARN] Image not found for label: {lf.name}")
+    print(f"  {split_name}: {copied} image-label pairs copied")
 
-    if not labelled:
-        print(f"[ERROR] No matched image+label pairs found.")
-        print(f"  img_dir  : {img_dir}")
-        print(f"  label_dir: {label_dir}")
-        return
-
-    random.shuffle(labelled)
-    split_idx = int(len(labelled) * train_ratio)
-    train_set = labelled[:split_idx]
-    val_set   = labelled[split_idx:]
-
-    # Ensure at least 1 in val
-    if not val_set and train_set:
-        val_set   = train_set[-1:]
-        train_set = train_set[:-1]
-
-    for split_name, split_files in [("train", train_set), ("val", val_set)]:
-        (out_dir / split_name / "images").mkdir(parents=True, exist_ok=True)
-        (out_dir / split_name / "labels").mkdir(parents=True, exist_ok=True)
-        for img, lbl in split_files:
-            shutil.copy(img, out_dir / split_name / "images" / img.name)
-            shutil.copy(lbl, out_dir / split_name / "labels" / lbl.name)
-
-    print(f"Split complete")
-    print(f"  Total pairs : {len(labelled)}")
-    print(f"  Train       : {len(train_set)}")
-    print(f"  Val         : {len(val_set)}")
-    print(f"  Output      : {out_dir}")
-    print(f"\nNext: python scripts/train.py")
-
-
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--img-dir",    type=Path, default=Path("dataset/augmented/images"),
-                    help="Folder of images (default: dataset/augmented/images)")
-    ap.add_argument("--label-dir",  type=Path, default=Path("dataset/augmented/labels"),
-                    help="Folder of labels (default: dataset/augmented/labels)")
-    ap.add_argument("--out",        type=Path, default=Path("dataset/split"),
-                    help="Output split folder (default: dataset/split)")
-    ap.add_argument("--train-ratio",type=float, default=0.85)
-    ap.add_argument("--seed",       type=int,   default=42)
-    args = ap.parse_args()
-    main(args.img_dir, args.label_dir, args.out, args.train_ratio, args.seed)
+print("\n✅ Split complete. Proceed to Step 4.")

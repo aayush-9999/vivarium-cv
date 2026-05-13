@@ -65,7 +65,8 @@ class YOLODetector(BaseDetector):
         if not self.is_ready():
             raise InferenceError("Model not loaded — call _load_model() first.")
 
-        t_start = time.perf_counter_ns()
+        t_start   = time.perf_counter_ns()
+        orig_size = frame.shape[:2]          # ← ADD: capture (h, w) before preprocessing
 
         try:
             img, ratio = self._preproc(frame, None, self._input_size)
@@ -89,13 +90,15 @@ class YOLODetector(BaseDetector):
                 f"YOLOX inference failed for cage '{cage_id}': {exc}"
             ) from exc
 
-        return self._postprocess((outputs, ratio), cage_id, t_start)
+        return self._postprocess((outputs, ratio), cage_id, t_start, orig_size)  # ← pass orig_size
+
 
     def _postprocess(
         self,
         raw_output,
         cage_id: str,
         inference_start_ns: int = 0,
+        orig_size: tuple[int, int] = None,   # ← ADD parameter
     ) -> DetectionResult:
         outputs, ratio = raw_output
         return parse_yolox_results(
@@ -103,8 +106,8 @@ class YOLODetector(BaseDetector):
             ratio              = ratio,
             cage_id            = cage_id,
             inference_start_ns = inference_start_ns,
+            input_size         = self._input_size,   # ← ADD
+            orig_size          = orig_size,           # ← ADD
         )
 
-    def warmup(self) -> None:
-        dummy = np.zeros((*YOLOX_INPUT_SIZE, 3), dtype=np.uint8)
-        self.detect(dummy, cage_id="__warmup__")
+    
