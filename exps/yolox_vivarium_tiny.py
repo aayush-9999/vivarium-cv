@@ -29,9 +29,9 @@ class Exp(MyExp):
         self.test_size        = (640, 640)
         self.data_num_workers = 0
         self.random_size      = (10, 20)
-        self.max_epoch        = 100
-        self.warmup_epochs    = 5
-        self.no_aug_epochs    = 15
+        self.max_epoch        = 40
+        self.warmup_epochs    = 2
+        self.no_aug_epochs    = 5
         self.basic_lr_per_img = 0.01 / 64
         self.data_dir         = "E:\\AI\\vivarium-project\\vivarium-cv\\dataset\\coco"
         self.train_ann        = "train.json"
