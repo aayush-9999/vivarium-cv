@@ -18,7 +18,8 @@ logger = logging.getLogger("vivarium.postprocessor")
 MOUSE_CLASS_ID    = 0
 WATER_CLASS_IDS   = {1, 2, 3, 4}
 FOOD_CLASS_IDS    = {5, 6, 7, 8}
-BEDDING_CLASS_IDS = {9, 10, 11, 12}
+BEDDING_CLASS_IDS    = {9, 10, 11, 12}
+_BEDDING_CLS_OFFSET  = min(BEDDING_CLASS_IDS)
 
 _MIN_BEDDING_CONF = 0.25
 
@@ -146,7 +147,7 @@ def _best_level(
         x2=float(best_box[2]), y2=float(best_box[3]),
         conf=best_conf,
     )
-    return reading, bbox
+    return reading, bbox    
 
 
 def _bedding_result(
