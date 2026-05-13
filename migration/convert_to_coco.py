@@ -368,7 +368,7 @@ def main(
                 img_paths   = img_paths,
                 label_dir   = label_dir,
                 out_json    = output_dir / f"{split_name}.json",
-                out_img_dir = output_dir / "images" / f"{split_name}2017",
+                out_img_dir = output_dir / f"{split_name}2017",
                 copy_images = copy_images,
                 dry_run     = dry_run,
             )

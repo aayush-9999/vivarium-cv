@@ -28,22 +28,22 @@ class Exp(MyExp):
         self.num_classes      = 13
         self.depth            = 0.33
         self.width            = 0.375
-        self.input_size       = (640, 640)
-        self.test_size        = (640, 640)
+        self.input_size       = (416, 416)   # ← reduced from 640 (big VRAM saving)
+        self.test_size        = (416, 416)   # ← match input_size
         self.data_num_workers = 0
         self.random_size      = (10, 20)
         self.max_epoch        = 100        
         self.warmup_epochs    = 3
         self.no_aug_epochs    = 10
         self.basic_lr_per_img = 0.01 / 64
-        self.data_dir         = "E:\\AI\\vivarium-project\\vivarium-cv\\dataset\\coco"
+        self.data_dir         = r"E:\AI\vivarium-project\vivarium-cv\dataset\coco"
         self.train_ann        = "train.json"
         self.val_ann          = "val.json"
         self.eval_interval    = 5
-        self.test_conf        = 0.25       # lowered from 0.35 — bedding needs lower threshold initially
+        self.test_conf        = 0.25
         self.nmsthre          = 0.45
         self.output_dir       = "YOLOX_outputs"
-        self.batch_size       = 8
+        self.batch_size       = 4  
 
     def get_dataset(self, cache: bool = False, cache_type: str = "ram"):
         from yolox.data import COCODataset, TrainTransform

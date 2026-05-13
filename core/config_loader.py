@@ -67,11 +67,15 @@ except ImportError:
     ]
     MOTION_PIXEL_THRESHOLD   = 0.02
 
-# Ensure class 9 (bedding) is always in the class map —
-# even if core/config.py hasn't been updated yet.
-if 9 not in YOLO_CLASS_MAP:
-    YOLO_CLASS_MAP = dict(YOLO_CLASS_MAP)   # copy so we don't mutate the imported object
-    YOLO_CLASS_MAP[9] = "bedding"
+for cls_id, name in {
+    9:  "bedding_worst",
+    10: "bedding_bad",
+    11: "bedding_ok",
+    12: "bedding_perfect",
+}.items():
+    if cls_id not in YOLO_CLASS_MAP:
+        YOLO_CLASS_MAP = dict(YOLO_CLASS_MAP)
+        YOLO_CLASS_MAP[cls_id] = name
 
 
 # ---------------------------------------------------------------------------
@@ -99,20 +103,19 @@ CONFIG: dict[str, Any] = {
     "device":  os.getenv("YOLO_DEVICE", "cpu"),
 
     # ── YOLOX ────────────────────────────────────────────────────────────
-    "yolox": {
+     "yolox": {
         "weights":     os.getenv("YOLO_WEIGHTS", "models/yolo/best.pt"),
         "exp_file":    str(YOLOX_EXP_FILE),
         "input_size":  YOLOX_INPUT_SIZE,
         "conf_thre":   YOLO_CONF_THRESHOLD,
         "nms_thre":    YOLO_IOU_THRESHOLD,
-        "num_classes": 9,   # ← was 9; +1 for bedding (class 9)
-    },
+        "num_classes": int(os.getenv("YOLOX_NUM_CLASSES", "13")),
+    },                                                         
 
     # ── SSD (legacy) ─────────────────────────────────────────────────────
     "ssd": {
         "weights": os.getenv("SSD_WEIGHTS", "models/ssd/ssd_mobilenet.onnx"),
     },
-
     # ── PSPNet ────────────────────────────────────────────────────────────
     "pspnet": {
         "water_weights":     os.getenv("PSP_WATER_WEIGHTS"),

@@ -72,7 +72,7 @@ class InferencePipeline:
 
 
 def _is_critical(result: DetectionResult) -> bool:
-    return result.water.status == "CRITICAL" or result.food.status == "CRITICAL"
+    return result.water.status == "CRITICAL" or result.food.status == "CRITICAL" or result.bedding.condition in ("BAD", "WORST")
 
 
 def _save_frame(frame: np.ndarray, cage_id: str, output_dir: str) -> str:
