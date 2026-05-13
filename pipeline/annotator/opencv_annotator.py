@@ -10,12 +10,16 @@ STATUS_COLORS = {
     "CRITICAL": (0,     0, 255),
 }
 
-# Bedding condition colours
 BEDDING_COLORS = {
-    "PERFECT": (80,  200,  80),    # green
-    "OK":      (0,   180, 255),    # amber-ish
-    "BAD":     (0,   100, 255),    # orange-red
-    "WORST":   (0,     0, 255),    # red
+    # YOLOX 4-class path (from_class_id)
+    "PERFECT":      ( 80, 200,  80),   # green
+    "OK":           (  0, 180, 255),   # amber-ish
+    "BAD":          (  0, 100, 255),   # orange-red
+    "WORST":        (  0,   0, 255),   # red
+    # ClipBeddingAssessor binary path
+    "GOOD":         ( 80, 200,  80),   # same as PERFECT
+    # BeddingReading.not_detected() sentinel
+    "NOT_DETECTED": (160, 160, 160),   # grey
 }
 
 # Mouse bbox colour — distinct cyan so it doesn't clash with water/food

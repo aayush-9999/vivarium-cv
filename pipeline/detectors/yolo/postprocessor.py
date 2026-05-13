@@ -42,7 +42,8 @@ logger = logging.getLogger("vivarium.postprocessor")
 # Class ID groups
 WATER_CLASS_IDS   = {1, 2, 3, 4}
 FOOD_CLASS_IDS    = {5, 6, 7, 8}
-BEDDING_CLASS_IDS = {9, 10, 11, 12}
+BEDDING_CLASS_IDS    = {9, 10, 11, 12}
+_BEDDING_CLS_OFFSET  = min(BEDDING_CLASS_IDS)
 
 # Frame size used during YOLOX training (used for bedding area calculation)
 _FRAME_AREA = 640 * 640
@@ -145,6 +146,7 @@ def parse_yolox_results(
 # ---------------------------------------------------------------------------
 # Bedding helper
 # ---------------------------------------------------------------------------
+_MIN_BEDDING_CONF = 0.25   # ignore very weak bedding hits
 
 def _bedding_result(
     boxes:   np.ndarray,
@@ -152,35 +154,50 @@ def _bedding_result(
     classes: np.ndarray,
 ) -> tuple[BeddingReading, Optional[BoundingBox]]:
     """
-    Pick the highest-confidence bedding detection.
-    Condition comes directly from class ID — no area threshold needed.
+    Bedding detection — severity-aware, 4-class.
+
+    Condition = WORST (highest class-ID) detection above confidence threshold.
+    BBox      = highest-confidence detection (for visualisation only).
+
+    Using worst-class rather than highest-confidence prevents a very confident
+    PERFECT detection from masking a lower-confidence WORST detection.
     """
-    best_conf = -1.0
-    best_box  = None
-    best_cls  = None
+    best_conf  = -1.0
+    best_box   = None
+    worst_cls  = None    # highest class ID seen among qualifying detections
     total_area = 0.0
 
     for box, score, cls in zip(boxes, scores, classes):
         if int(cls) not in BEDDING_CLASS_IDS:
             continue
+        if float(score) < _MIN_BEDDING_CONF:
+            continue
+
         x1, y1, x2, y2 = box
-        total_area += max(0.0, float(x2-x1)) * max(0.0, float(y2-y1))
+        total_area += max(0.0, float(x2 - x1)) * max(0.0, float(y2 - y1))
+
+        # Worst condition = highest class ID
+        if worst_cls is None or int(cls) > worst_cls:
+            worst_cls = int(cls)
+
+        # Best bbox for visualisation = highest confidence
         if float(score) > best_conf:
             best_conf = float(score)
-            best_cls  = int(cls)
             best_box  = box
 
-    if best_cls is None:
+    if worst_cls is None:
         return BeddingReading.not_detected(), None
 
     area_pct = min(100.0, total_area / _FRAME_AREA * 100.0)
-    reading  = BeddingReading.from_class_id(best_cls, area_pct)
+    reading  = BeddingReading.from_class_id(worst_cls - _BEDDING_CLS_OFFSET, area_pct)
     bbox     = BoundingBox(
-        x1=float(best_box[0]), y1=float(best_box[1]),
-        x2=float(best_box[2]), y2=float(best_box[3]),
-        conf=best_conf,
+        x1   = float(best_box[0]),
+        y1   = float(best_box[1]),
+        x2   = float(best_box[2]),
+        y2   = float(best_box[3]),
+        conf = best_conf,
     )
-    return reading, bbox
+    return reading, bbox    
 
 
 # ---------------------------------------------------------------------------

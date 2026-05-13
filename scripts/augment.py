@@ -265,9 +265,20 @@ def main(src, dst, src_labels, n, seed, img_size, quality):
         d.mkdir(parents=True, exist_ok=True)
 
     (label_dir / "classes.txt").write_text(
-        "mouse\nwater_critical\nwater_low\nwater_ok\nwater_full\n"
-        "food_critical\nfood_low\nfood_ok\nfood_full\n"
-    )
+    "mouse\n"
+    "water_critical\n"
+    "water_low\n"
+    "water_ok\n"
+    "water_full\n"
+    "food_critical\n"
+    "food_low\n"
+    "food_ok\n"
+    "food_full\n"
+    "bedding_worst\n"
+    "bedding_bad\n"
+    "bedding_ok\n"
+    "bedding_perfect\n"
+)
 
     source_images = sorted(
         p for p in src.iterdir()
@@ -310,12 +321,23 @@ def main(src, dst, src_labels, n, seed, img_size, quality):
                     raw_labels = read_labels(matches[0])
 
         # Only propagate mouse boxes — water/food class will be set by augment
-        mouse_labels = [(c,cx,cy,bw,bh) for (c,cx,cy,bw,bh) in raw_labels if c == 0]
+        preserved_labels = [
+            (c,cx,cy,bw,bh)
+            for (c,cx,cy,bw,bh) in raw_labels
+            if c in {0,9,10,11,12}
+        ]
 
         lb_img, scale, pad_top, pad_left = _letterbox(img, img_size)
 
-        lb_mouse = letterbox_labels(mouse_labels, scale, pad_top, pad_left,
-                                    orig_h, orig_w, img_size)
+        lb_preserved = letterbox_labels(
+    preserved_labels,
+    scale,
+    pad_top,
+    pad_left,
+    orig_h,
+    orig_w,
+    img_size,
+)
 
         # Extract water/food bbox positions from GDINO labels for overlay positioning
         # GDINO used classes 1/2; we use them only for overlay position, not class
@@ -328,7 +350,7 @@ def main(src, dst, src_labels, n, seed, img_size, quality):
         orig_name = f"{stem}_orig.jpg"
         cv2.imwrite(str(img_dir/orig_name), lb_img, [cv2.IMWRITE_JPEG_QUALITY, quality])
         # For orig: use median fill level (ok)
-        orig_labels = list(lb_mouse)
+        orig_labels = list(lb_preserved)
         if water_bbox_n:
             cx,cy,bw,bh = water_bbox_n
             orig_labels.append((3, cx, cy, bw, bh))  # water_ok
@@ -359,17 +381,26 @@ def main(src, dst, src_labels, n, seed, img_size, quality):
                                          p["water_frac"], p["food_frac"])
 
             # Label transforms
-            aug_mouse = list(lb_mouse)
-            if p["flip"]:        aug_mouse = flip_labels(aug_mouse)
-            if abs(p["angle"]) > 0.5: aug_mouse = rotate_labels(aug_mouse, p["angle"], img_size)
-            aug_mouse = clip_labels(aug_mouse)
+            aug_preserved = list(lb_preserved)
+
+            if p["flip"]:
+                aug_preserved = flip_labels(aug_preserved)
+
+            if abs(p["angle"]) > 0.5:
+                aug_preserved = rotate_labels(
+                    aug_preserved,
+                    p["angle"],
+                    img_size,
+                )
+
+            aug_preserved = clip_labels(aug_preserved)
 
             # Determine water/food class from fill fraction
             w_cls = _frac_to_water_class(p["water_frac"])
             f_cls = _frac_to_food_class(p["food_frac"])
 
             # Build final label set: mouse boxes + 1 water box + 1 food box
-            aug_labels = list(aug_mouse)
+            aug_labels = list(aug_preserved)
             if ov_water:
                 cx,cy,bw,bh = ov_water
                 aug_labels.append((w_cls, cx, cy, bw, bh))
@@ -386,9 +417,10 @@ def main(src, dst, src_labels, n, seed, img_size, quality):
                 "source": src_path.name, "output": out_name, "aug_index": i,
                 "water_class": w_cls, "food_class": f_cls,
                 "label_counts": {
-                    "mouse": sum(1 for (c,*_) in aug_labels if c==0),
+                    "mouse": sum(1 for (c,*_) in aug_labels if c == 0),
                     "water": sum(1 for (c,*_) in aug_labels if c in {1,2,3,4}),
                     "food":  sum(1 for (c,*_) in aug_labels if c in {5,6,7,8}),
+                    "bedding": sum(1 for (c,*_) in aug_labels if c in {9,10,11,12}),
                 },
                 **p,
             }
@@ -396,8 +428,14 @@ def main(src, dst, src_labels, n, seed, img_size, quality):
                 json.dumps(meta, indent=2))
             total += 1
 
-        m = len(lb_mouse)
-        print(f"  ✓ {stem:<40} {n} variants  (mouse={m} water={'yes' if water_bbox_n else 'NO'} food={'yes' if food_bbox_n else 'NO'})")
+        m = len(lb_preserved)
+
+        print(
+            f"  ✓ {stem:<40} {n} variants  "
+            f"(objects={m} "
+            f"water={'yes' if water_bbox_n else 'NO'} "
+            f"food={'yes' if food_bbox_n else 'NO'})"
+        )
 
     print(f"\nDone — {total} augmented images → {img_dir}")
     print("Next: python scripts/split_dataset.py && python scripts/train.py")
@@ -405,9 +443,14 @@ def main(src, dst, src_labels, n, seed, img_size, quality):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src",        type=Path, default=Path("dataset/original"))
+    
     ap.add_argument("--dst",        type=Path, default=Path("dataset/augmented"))
-    ap.add_argument("--src-labels", type=Path, default=None)
+    ap.add_argument("--src",type=Path,default=Path("dataset/source/images"))
+    ap.add_argument(
+        "--src-labels",
+        type=Path,
+        default=Path("dataset/source/labels")
+    )
     ap.add_argument("--n",          type=int,  default=50)
     ap.add_argument("--seed",       type=int,  default=random.randint(0,99999))
     ap.add_argument("--img-size",   type=int,  default=640)

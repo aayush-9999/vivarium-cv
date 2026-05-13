@@ -90,11 +90,14 @@ class InferencePipeline:
             cage_id      = cage_id,
             timestamp    = datetime.now(tz=timezone.utc),
             mouse_count  = yolo_result.mouse_count,
+            mouse_bboxes = yolo_result.mouse_bboxes,
             water        = water,
             food         = food,
+            bedding      = yolo_result.bedding,        # was missing
             inference_ms = yolo_result.inference_ms,
             water_bbox   = yolo_result.water_bbox,
             food_bbox    = yolo_result.food_bbox,
+            bedding_bbox = yolo_result.bedding_bbox,   # was missing
         )
 
         if save_flagged and _is_critical(result):
