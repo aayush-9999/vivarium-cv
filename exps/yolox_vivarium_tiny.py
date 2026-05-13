@@ -1,18 +1,21 @@
-# exps/yolox_vivarium_tiny.py  — BEDDING PATCH
+# exps/yolox_vivarium_tiny.py
 """
-YOLOX experiment config — 10-class vivarium detector.
+YOLOX experiment config — 13-class vivarium detector.
 
-10-class scheme:
-    0  mouse
-    1  water_critical   (fill 0–15 %)
-    2  water_low        (fill 15–35 %)
-    3  water_ok         (fill 35–80 %)
-    4  water_full       (fill 80–100 %)
-    5  food_critical    (fill 0–15 %)
-    6  food_low         (fill 15–35 %)
-    7  food_ok          (fill 35–80 %)
-    8  food_full        (fill 80–100 %)
-    9  bedding          ← NEW — cage floor / soiled bedding region
+Class scheme:
+    0   mouse
+    1   water_critical   (0–15%)
+    2   water_low        (15–35%)
+    3   water_ok         (35–80%)
+    4   water_full       (80–100%)
+    5   food_critical    (0–15%)
+    6   food_low         (15–35%)
+    7   food_ok          (35–80%)
+    8   food_full        (80–100%)
+    9   bedding_worst
+    10  bedding_bad
+    11  bedding_ok
+    12  bedding_perfect
 """
 import os
 from yolox.exp import Exp as MyExp
@@ -21,26 +24,27 @@ from yolox.exp import Exp as MyExp
 class Exp(MyExp):
     def __init__(self):
         super().__init__()
-        self.exp_name    = "yolox_vivarium_tiny"
-        self.num_classes      = 13        
+        self.exp_name         = "yolox_vivarium_tiny"
+        self.num_classes      = 13
         self.depth            = 0.33
         self.width            = 0.375
         self.input_size       = (640, 640)
         self.test_size        = (640, 640)
         self.data_num_workers = 0
         self.random_size      = (10, 20)
-        self.max_epoch        = 40
-        self.warmup_epochs    = 2
-        self.no_aug_epochs    = 5
+        self.max_epoch        = 100        
+        self.warmup_epochs    = 3
+        self.no_aug_epochs    = 10
         self.basic_lr_per_img = 0.01 / 64
         self.data_dir         = "E:\\AI\\vivarium-project\\vivarium-cv\\dataset\\coco"
         self.train_ann        = "train.json"
         self.val_ann          = "val.json"
         self.eval_interval    = 5
-        self.test_conf        = 0.35
+        self.test_conf        = 0.25       # lowered from 0.35 — bedding needs lower threshold initially
         self.nmsthre          = 0.45
         self.output_dir       = "YOLOX_outputs"
-        self.batch_size = 8 
+        self.batch_size       = 8
+
     def get_dataset(self, cache: bool = False, cache_type: str = "ram"):
         from yolox.data import COCODataset, TrainTransform
         return COCODataset(
