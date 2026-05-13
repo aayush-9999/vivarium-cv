@@ -61,11 +61,6 @@ class BeddingReading(BaseModel):
         condition = mapping.get(class_id, "OK")
         return cls(area_pct=round(area_pct, 2), condition=condition)
 
-    @classmethod
-    def not_detected(cls) -> "BeddingReading":
-        return cls(area_pct=0.0, condition="OK")
-
-
 class DetectionResult(BaseModel):
     cage_id:      str
     timestamp:    datetime

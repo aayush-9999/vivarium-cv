@@ -1,12 +1,4 @@
 # pipeline/detectors/yolo/yolo_detector.py
-"""
-YOLOXDetector — wraps the YOLOX model for vivarium cage inference.
-
-All configuration (weights path, exp file, input size, conf/NMS thresholds)
-is pulled from core.config_loader.CONFIG so there is no scattered
-os.getenv() usage here.
-"""
-
 from __future__ import annotations
 
 import time
@@ -29,26 +21,22 @@ from pipeline.detectors.yolo.postprocessor import parse_yolox_results
 
 
 class YOLODetector(BaseDetector):
-    """
-    Loads a YOLOX model from a checkpoint and exposes a detect() method
-    that returns a fully populated DetectionResult.
-    """
 
     def __init__(self, weights_path: str, device: str = "cpu") -> None:
-        # BaseDetector.__init__ calls _load_model()
         super().__init__(weights_path=weights_path, device=device)
-
-    # ------------------------------------------------------------------
-    # BaseDetector implementation
-    # ------------------------------------------------------------------
 
     def _load_model(self) -> None:
         try:
             from yolox.exp import get_exp
             from yolox.data.data_augment import ValTransform
 
-            exp              = get_exp(str(YOLOX_EXP_FILE), exp_name=None)
-            exp.num_classes  = CONFIG["yolox"]["num_classes"]
+            assert CONFIG["yolox"]["num_classes"] == 13, (
+                f"Config has num_classes={CONFIG['yolox']['num_classes']}, "
+                "expected 13. Check YOLOX_NUM_CLASSES in your .env"
+            )
+
+            exp             = get_exp(str(YOLOX_EXP_FILE), exp_name=None)
+            exp.num_classes = CONFIG["yolox"]["num_classes"]
 
             self.model = exp.get_model()
             self.model.eval()
@@ -60,8 +48,10 @@ class YOLODetector(BaseDetector):
             self.model.to(self.device)
 
             self._preproc    = ValTransform(legacy=False)
-            self._input_size = YOLOX_INPUT_SIZE   # (H, W)
+            self._input_size = YOLOX_INPUT_SIZE
 
+        except AssertionError:
+            raise
         except FileNotFoundError as exc:
             raise DetectorInitError(
                 f"YOLOX weights not found: {self.weights_path}"
@@ -109,10 +99,10 @@ class YOLODetector(BaseDetector):
     ) -> DetectionResult:
         outputs, ratio = raw_output
         return parse_yolox_results(
-            outputs             = outputs,
-            ratio               = ratio,
-            cage_id             = cage_id,
-            inference_start_ns  = inference_start_ns,
+            outputs            = outputs,
+            ratio              = ratio,
+            cage_id            = cage_id,
+            inference_start_ns = inference_start_ns,
         )
 
     def warmup(self) -> None:
