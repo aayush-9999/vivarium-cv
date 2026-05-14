@@ -20,7 +20,7 @@ class CageReading(Base):
     food_status  = Column(String(10))
     # ── Bedding (added) ───────────────────────────────────────────────────
     bedding_area_pct  = Column(Numeric(5, 2), nullable=True)   # 0–100
-    bedding_condition = Column(String(10),    nullable=True)   # GOOD | BAD
+    bedding_condition = Column(String(20),    nullable=True)   
     # ─────────────────────────────────────────────────────────────────────
     inference_ms = Column(SmallInteger)
     image_path   = Column(Text)
